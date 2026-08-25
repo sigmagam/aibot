@@ -54,9 +54,9 @@ from telegram_rich.stream import StreamingReplier
 logger = logging.getLogger("bot.handlers")
 
 # Commands handled by this bot. Keep plain-text handler from catching commands.
-_COMMANDS = (
+_COMMANDS = [
     "start", "help", "reset", "model", "stats", "broadcast", "gitpull", "ai"
-)
+]
 
 # Telegram Bot API supports button styles as strings: primary, success, danger.
 # Keep this compatible with Kurigram/Pyrogram forks without requiring a
