@@ -44,6 +44,11 @@ from pyrogram.types import (
     Message,
 )
 
+try:
+    from pyrogram.enums import ButtonStyle
+except ImportError:  # older fork without the enum
+    ButtonStyle = None
+
 from ai.models import (
     MODEL_CATALOG,
     MODEL_PRIORITY,
@@ -72,22 +77,56 @@ _COMMANDS = [
 
 HTML = ParseMode.HTML
 
-# Telegram Bot API supports button styles as strings: primary, success, danger.
-# Keep this compatible with Kurigram/Pyrogram forks without requiring a
-# ButtonStyle enum that may not exist in the installed version.
-try:
-    from pyrogram.types import InlineKeyboardButton as _IKB
-    _SUPPORTS_BUTTON_STYLE = "style" in inspect.signature(_IKB).parameters
-except (ImportError, TypeError, ValueError):
-    _SUPPORTS_BUTTON_STYLE = False
+# Telegram/Kurigram button colors need the real ButtonStyle enum, not a
+# plain string — passing "primary" as a str is silently ignored by
+# Pyrogram/Kurigram, which is why buttons stayed the default color.
+_STYLE_MAP = {}
+if ButtonStyle is not None:
+    _STYLE_MAP = {
+        "default": ButtonStyle.DEFAULT,
+        "primary": ButtonStyle.PRIMARY,
+        "danger": ButtonStyle.DANGER,
+        "success": ButtonStyle.SUCCESS,
+    }
+_SUPPORTS_BUTTON_STYLE = "style" in inspect.signature(InlineKeyboardButton).parameters
+_SUPPORTS_CUSTOM_EMOJI = "icon_custom_emoji_id" in inspect.signature(InlineKeyboardButton).parameters
 
 
-def _button(text: str, callback_data: str, style: str | None = None) -> InlineKeyboardButton:
-    """Build an inline button, applying a color style when the running
-    Kurigram/Pyrogram fork supports it (falls back to a plain button
-    otherwise, so this never crashes on older forks)."""
-    kwargs = {"style": style} if (style and _SUPPORTS_BUTTON_STYLE) else {}
+def _button(
+    text: str,
+    callback_data: str,
+    style: str | None = None,
+    icon_custom_emoji_id: str | None = None,
+) -> InlineKeyboardButton:
+    """Build an inline button, applying a color style and/or a custom-emoji
+    icon when the running Kurigram/Pyrogram fork supports them (falls back
+    to a plain button otherwise, so this never crashes on older forks)."""
+    kwargs: dict = {}
+    if style and _SUPPORTS_BUTTON_STYLE and style in _STYLE_MAP:
+        kwargs["style"] = _STYLE_MAP[style]
+    if icon_custom_emoji_id and _SUPPORTS_CUSTOM_EMOJI:
+        kwargs["icon_custom_emoji_id"] = icon_custom_emoji_id
     return InlineKeyboardButton(text, callback_data=callback_data, **kwargs)
+
+
+# Custom emoji IDs (real Telegram Premium custom emoji, "tg://emoji?id=...").
+# icon_custom_emoji_id only renders for bots that bought an extra username on
+# Fragment, or when the bot owner has Telegram Premium and DMs the button
+# directly — so this is opt-in via ENABLE_BUTTON_ICONS, off by default so it
+# never silently fails on bots that aren't eligible.
+_BUTTON_ICONS = {
+    "provider": "5237799019329105246",   # 🧠
+    "model": "5472164874886846699",      # ✨
+    "cancel": "5337249876126215335",     # ❌
+    "back": "5258236805890710909",       # ⬅️
+    "browse": "5372981976804366741",     # 🤖
+    "reset": "4956591954088428445",      # 🧹
+}
+_ENABLE_BUTTON_ICONS = os.getenv("ENABLE_BUTTON_ICONS", "false").lower() == "true"
+
+
+def _icon(key: str) -> str | None:
+    return _BUTTON_ICONS.get(key) if _ENABLE_BUTTON_ICONS else None
 
 
 def _esc(text: str) -> str:
@@ -182,9 +221,9 @@ def _provider_keyboard(token: str) -> InlineKeyboardMarkup:
         row = []
         for provider in providers[i : i + 2]:
             label = PROVIDER_LABELS.get(provider, provider)
-            row.append(_button(f"🧠 {label}", f"prov:{provider}:{token}", style="primary"))
+            row.append(_button(f"🧠 {label}", f"prov:{provider}:{token}", style="primary", icon_custom_emoji_id=_icon("provider")))
         rows.append(row)
-    rows.append([_button("✖️ Cancel", f"cancel:{token}", style="danger")])
+    rows.append([_button("❌ Cancel", f"cancel:{token}", style="danger", icon_custom_emoji_id=_icon("cancel"))])
     return InlineKeyboardMarkup(rows)
 
 
@@ -196,9 +235,9 @@ def _model_keyboard(provider: str, token: str) -> InlineKeyboardMarkup:
         for model in models[i : i + 2]:
             # short_name = last path segment, e.g. "cf/@cf/meta/llama-3.2-1b-instruct" -> "llama-3.2-1b-instruct"
             short_name = model.rsplit("/", 1)[-1]
-            row.append(_button(f"✨ {short_name}", f"model:{model}:{token}", style="success"))
+            row.append(_button(f"✨ {short_name}", f"model:{model}:{token}", style="success", icon_custom_emoji_id=_icon("model")))
         rows.append(row)
-    rows.append([_button("⬅️ Back to providers", f"back:{token}", style="danger")])
+    rows.append([_button("⬅️ Back to providers", f"back:{token}", style="danger", icon_custom_emoji_id=_icon("back"))])
     return InlineKeyboardMarkup(rows)
 
 
@@ -250,8 +289,8 @@ def register_handlers(app: Client) -> None:
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
-                        _button("🤖 Browse models", "menu:model", style="primary"),
-                        _button("🧹 Reset chat", "menu:reset", style="danger"),
+                        _button("🤖 Browse models", "menu:model", style="primary", icon_custom_emoji_id=_icon("browse")),
+                        _button("🧹 Reset chat", "menu:reset", style="danger", icon_custom_emoji_id=_icon("reset")),
                     ]
                 ]
             ),
@@ -298,7 +337,7 @@ def register_handlers(app: Client) -> None:
             "\n".join(lines),
             parse_mode=HTML,
             reply_markup=InlineKeyboardMarkup(
-                [[_button("🧭 Pick provider &amp; model", "menu:ai", style="primary")]]
+                [[_button("🧭 Pick provider &amp; model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))]]
             ),
         )
 
