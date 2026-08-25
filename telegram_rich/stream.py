@@ -1,7 +1,7 @@
 """
 StreamingReplier: sends a model's answer to Telegram as it streams in,
 periodically editing one message and auto-formatting Markdown -> HTML
-(<b>, <i>, <code>, <pre>, <blockquote>).
+(, , , , <blockquote>).
 
 When `show_reasoning=True` (the user picked "Thinking" mode), reasoning
 tokens are accumulated and rendered inside a native Telegram *expandable*
@@ -97,7 +97,7 @@ class StreamingReplier:
         except MessageNotModified:
             pass
         except Exception:
-            # HTML can be "incomplete" mid-stream (e.g. an unclosed <b> tag)
+            # HTML can be "incomplete" mid-stream (e.g. an unclosed  tag)
             # -> ignore, the next update will follow and is usually valid again.
             pass
 

@@ -184,18 +184,18 @@ def register_handlers(app: Client) -> None:
     async def start_cmd(client: Client, message: Message):
         upsert_user(message)
         await message.reply_text(
-            "✨ <b>Selamat datang di AI Studio!</b>\n\n"
+            "✨ Selamat datang di AI Studio!\n\n"
             "Satu bot untuk ngobrol, coding, brainstorming, dan eksplorasi "
             "berbagai model AI — langsung dari Telegram.\n\n"
-            "⚡ <b>Mulai cepat</b>\n"
+            "⚡ Mulai cepat\n"
             "• Kirim pesan biasa → AI otomatis memilih model terbaik yang tersedia.\n"
-            "• <code>/ai pertanyaan kamu</code> → pilih provider & model sendiri.\n"
-            "• <code>/model</code> → lihat seluruh model yang tersedia.\n"
-            "• <code>/reset</code> → mulai percakapan dari awal.\n\n"
-            "💡 <b>Tips:</b> Untuk hasil terbaik, tulis konteks, tujuan, dan format "
+            "• /ai pertanyaan kamu → pilih provider & model sendiri.\n"
+            "• /model → lihat seluruh model yang tersedia.\n"
+            "• /reset → mulai percakapan dari awal.\n\n"
+            "💡 Tips: Untuk hasil terbaik, tulis konteks, tujuan, dan format "
             "jawaban yang kamu inginkan.\n\n"
             "Selamat bereksperimen. 🚀",
-            parse_mode="html",
+            parse_mode=None,
         )
 
     @app.on_message(filters.command("help"))
@@ -211,27 +211,27 @@ def register_handlers(app: Client) -> None:
     async def model_cmd(client: Client, message: Message):
         total = sum(len(models) for models in MODEL_CATALOG.values())
         lines = [
-            "🧩 <b>MODEL DIRECTORY</b>",
+            "🧩 MODEL DIRECTORY",
             "",
-            f"📦 <b>{total} model</b> tersedia dari "
-            f"<b>{len(MODEL_CATALOG)} provider</b>.",
+            f"📦 {total} model tersedia dari "
+            f"{len(MODEL_CATALOG)} provider.",
             "",
-            "🤖 <b>Auto mode</b>",
+            "🤖 Auto mode",
         ]
         for i, m in enumerate(MODEL_PRIORITY, start=1):
-            lines.append(f"  {i}. <code>{m}</code>")
-        lines += ["", "📚 <b>Daftar provider & model</b>"]
+            lines.append(f"  {i}. {m}")
+        lines += ["", "📚 Daftar provider & model"]
         for provider, models in MODEL_CATALOG.items():
             label = PROVIDER_LABELS.get(provider, provider)
-            lines.append(f"\n<b>▸ {label}</b> <i>({len(models)} model)</i>")
+            lines.append(f"\n▸ {label} ({len(models)} model)")
             for m in models:
-                lines.append(f"  • <code>{m}</code>")
+                lines.append(f"  • {m}")
         lines += [
             "",
-            "🎛️ Gunakan <code>/ai prompt</code> untuk memilih provider "
+            "🎛️ Gunakan /ai prompt untuk memilih provider "
             "dan model secara manual."
         ]
-        await message.reply_text("\n".join(lines), parse_mode="html")
+        await message.reply_text("\n".join(lines), parse_mode=None)
 
     def _is_admin(message: Message) -> bool:
         return bool(message.from_user and message.from_user.id in settings.admin_ids)
@@ -241,10 +241,10 @@ def register_handlers(app: Client) -> None:
         if not _is_admin(message):
             return
         await message.reply_text(
-            f"📊 <b>BOT DATABASE</b>\n\n"
-            f"👥 Users started: <b>{count_users()}</b>\n"
-            f"🗃️ Storage: <code>{settings.database_path}</code>",
-            parse_mode="html",
+            f"📊 BOT DATABASE\n\n"
+            f"👥 Users started: {count_users()}\n"
+            f"🗃️ Storage: {settings.database_path}",
+            parse_mode=None,
         )
 
     @app.on_message(filters.command("broadcast"))
@@ -253,18 +253,18 @@ def register_handlers(app: Client) -> None:
             return
         if len(message.command) < 2 and not message.reply_to_message:
             await message.reply_text(
-                "📣 <b>Broadcast</b>\n\n"
-                "Gunakan <code>/broadcast pesan</code> atau reply sebuah pesan "
-                "lalu kirim <code>/broadcast</code>.",
-                parse_mode="html",
+                "📣 Broadcast\n\n"
+                "Gunakan /broadcast pesan atau reply sebuah pesan "
+                "lalu kirim /broadcast.",
+                parse_mode=None,
             )
             return
 
         targets = get_broadcast_targets()
         sent = failed = 0
         status = await message.reply_text(
-            f"📣 Menyiapkan broadcast ke <b>{len(targets)}</b> pengguna…",
-            parse_mode="html",
+            f"📣 Menyiapkan broadcast ke {len(targets)} pengguna…",
+            parse_mode=None,
         )
 
         for chat_id in targets:
@@ -283,11 +283,11 @@ def register_handlers(app: Client) -> None:
             await asyncio.sleep(0.05)
 
         await status.edit_text(
-            "📣 <b>BROADCAST SELESAI</b>\n\n"
-            f"✅ Terkirim: <b>{sent}</b>\n"
-            f"⚠️ Gagal: <b>{failed}</b>\n"
-            f"👥 Target awal: <b>{len(targets)}</b>",
-            parse_mode="html",
+            "📣 BROADCAST SELESAI\n\n"
+            f"✅ Terkirim: {sent}\n"
+            f"⚠️ Gagal: {failed}\n"
+            f"👥 Target awal: {len(targets)}",
+            parse_mode=None,
         )
 
     @app.on_message(filters.command("gitpull"))
@@ -296,9 +296,9 @@ def register_handlers(app: Client) -> None:
             return
 
         status = await message.reply_text(
-            "🔄 <b>UPDATE DEPLOYMENT</b>\n\n"
+            "🔄 UPDATE DEPLOYMENT\n\n"
             "Mengambil perubahan terbaru dari GitHub…",
-            parse_mode="html",
+            parse_mode=None,
         )
         try:
             repo = os.path.abspath(settings.git_repo_dir)
@@ -309,10 +309,10 @@ def register_handlers(app: Client) -> None:
             if pull.returncode != 0:
                 output = (pull.stderr or pull.stdout or "git pull gagal").strip()
                 await status.edit_text(
-                    "❌ <b>UPDATE GAGAL</b>\n\n<pre>"
+                    "❌ UPDATE GAGAL\n\n"
                     + output[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                    + "</pre>",
-                    parse_mode="html",
+                    + "",
+                    parse_mode=None,
                 )
                 return
 
@@ -325,10 +325,10 @@ def register_handlers(app: Client) -> None:
                 if pip.returncode != 0:
                     output = (pip.stderr or pip.stdout or "pip install gagal").strip()
                     await status.edit_text(
-                        "⚠️ <b>KODE TERUPDATE, DEPENDENCY GAGAL</b>\n\n<pre>"
+                        "⚠️ KODE TERUPDATE, DEPENDENCY GAGAL\n\n"
                         + output[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                        + "</pre>",
-                        parse_mode="html",
+                        + "",
+                        parse_mode=None,
                     )
                     return
 
@@ -338,10 +338,10 @@ def register_handlers(app: Client) -> None:
             ).stdout.strip() or "unknown"
 
             await status.edit_text(
-                "✅ <b>UPDATE BERHASIL</b>\n\n"
-                f"📌 Commit: <code>{commit}</code>\n"
+                "✅ UPDATE BERHASIL\n\n"
+                f"📌 Commit: {commit}\n"
                 "♻️ Bot sedang restart otomatis…",
-                parse_mode="html",
+                parse_mode=None,
             )
             await asyncio.sleep(1)
 
@@ -352,10 +352,10 @@ def register_handlers(app: Client) -> None:
 
         except Exception as exc:
             await status.edit_text(
-                "❌ <b>UPDATE ERROR</b>\n\n<pre>"
+                "❌ UPDATE ERROR\n\n"
                 + str(exc)[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                + "</pre>",
-                parse_mode="html",
+                + "",
+                parse_mode=None,
             )
 
     @app.on_message(filters.command("ai"))
