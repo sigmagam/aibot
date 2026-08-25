@@ -1,0 +1,3 @@
+This build intentionally uses no Telegram HTML parse mode.
+All bot messages use parse_mode=None or omit parse_mode.
+HTML formatting tags added by the previous build were removed.

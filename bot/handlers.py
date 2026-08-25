@@ -184,31 +184,18 @@ def register_handlers(app: Client) -> None:
     async def start_cmd(client: Client, message: Message):
         upsert_user(message)
         await message.reply_text(
-            "✨ <b>WELCOME TO AI STUDIO</b>
-
-"
+            "✨ <b>WELCOME TO AI STUDIO</b>\n\n"
             "<blockquote>One powerful AI workspace for "
             "<b>chatting, coding, brainstorming</b>, and exploring "
-            "multiple AI models — right inside Telegram.</blockquote>
-
-"
-            "⚡ <b>QUICK START</b>
-"
-            "• Send a normal message → AI automatically selects the best available model.
-"
-            "• <code>/ai your prompt</code> → choose your provider and model.
-"
-            "• <code>/model</code> → browse every available provider and model.
-"
-            "• <code>/reset</code> → clear the current conversation.
-
-"
-            "💡 <b>PRO TIP</b>
-"
-            "<blockquote>For better results, include your context, goal, and preferred "
-            "answer format.</blockquote>
-
-"
+            "multiple AI models — right inside Telegram.</blockquote>\n\n"
+            "⚡ <b>QUICK START</b>\n"
+            "• Send a normal message → AI automatically selects the best available model.\n"
+            "• <code>/ai your prompt</code> → choose your provider and model.\n"
+            "• <code>/model</code> → browse every available provider and model.\n"
+            "• <code>/reset</code> → clear the current conversation.\n\n"
+            "💡 <b>PRO TIP</b>\n"
+            "<blockquote>For better results, include your context, goal, and "
+            "preferred answer format.</blockquote>\n\n"
             "🚀 <b>Enjoy exploring.</b>",
             parse_mode="html",
         )
