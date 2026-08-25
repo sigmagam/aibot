@@ -1,2 +1,0 @@
-Telegram output uses parse_mode=None.
-No HTML parse mode is used anywhere in the Python source.

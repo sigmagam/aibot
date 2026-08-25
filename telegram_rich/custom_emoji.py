@@ -4,10 +4,14 @@ custom emoji IDs, and wraps them in <emoji id="..."> tags (Kurigram/Pyrogram
 also accepts <tg-emoji emoji-id="...">, same thing) so they render as the
 custom animated/branded versions instead of the default Unicode glyph.
 
-Off by default via ENABLE_CUSTOM_EMOJI, since custom emoji entities only
-render for bots that bought an extra username on Fragment, or when the
-message is sent directly to a chat by a bot owned by a Telegram Premium
-account — turn it on once you've confirmed your bot meets one of those.
+Off by default via ENABLE_CUSTOM_EMOJI so you can test it first: turn it
+on with a known-valid emoji document ID and parse_mode=HTML, confirm it
+renders, then leave it on. Text custom emoji (<emoji id>/<tg-emoji
+emoji-id>) does NOT require a Fragment username or a Premium owner —
+that requirement only applies to icon_custom_emoji_id on buttons. If a
+text custom emoji isn't rendering, the usual causes are: an invalid/
+mistyped document ID, the message being sent with parse_mode=None
+instead of HTML, or this flag still being off.
 """
 from __future__ import annotations
 
