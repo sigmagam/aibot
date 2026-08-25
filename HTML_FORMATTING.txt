@@ -1,0 +1,3 @@
+Telegram HTML formatting is enabled.
+Supported tags used by the bot: <b>, <i>, <code>, <pre>, <blockquote>.
+The main user-facing UI is written in English.

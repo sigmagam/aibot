@@ -113,7 +113,7 @@ async def _run_generation(
 
         if not started:
             await trigger_message.reply_text(
-                "⚠️ The model didn't return any answer.", quote=True, parse_mode=None
+                "⚠️ The model didn't return any answer.", quote=True, parse_mode="html"
             )
             return
 
@@ -173,7 +173,7 @@ async def _offer_provider_selection(message: Message, prompt: str) -> None:
     await message.reply_text(
         "Pick a provider:",
         quote=True,
-        parse_mode=None,
+        parse_mode="html",
         reply_markup=_provider_keyboard(token),
     )
 
@@ -184,18 +184,33 @@ def register_handlers(app: Client) -> None:
     async def start_cmd(client: Client, message: Message):
         upsert_user(message)
         await message.reply_text(
-            "✨ Selamat datang di AI Studio!\n\n"
-            "Satu bot untuk ngobrol, coding, brainstorming, dan eksplorasi "
-            "berbagai model AI — langsung dari Telegram.\n\n"
-            "⚡ Mulai cepat\n"
-            "• Kirim pesan biasa → AI otomatis memilih model terbaik yang tersedia.\n"
-            "• /ai pertanyaan kamu → pilih provider & model sendiri.\n"
-            "• /model → lihat seluruh model yang tersedia.\n"
-            "• /reset → mulai percakapan dari awal.\n\n"
-            "💡 Tips: Untuk hasil terbaik, tulis konteks, tujuan, dan format "
-            "jawaban yang kamu inginkan.\n\n"
-            "Selamat bereksperimen. 🚀",
-            parse_mode=None,
+            "✨ <b>WELCOME TO AI STUDIO</b>
+
+"
+            "<blockquote>One powerful AI workspace for "
+            "<b>chatting, coding, brainstorming</b>, and exploring "
+            "multiple AI models — right inside Telegram.</blockquote>
+
+"
+            "⚡ <b>QUICK START</b>
+"
+            "• Send a normal message → AI automatically selects the best available model.
+"
+            "• <code>/ai your prompt</code> → choose your provider and model.
+"
+            "• <code>/model</code> → browse every available provider and model.
+"
+            "• <code>/reset</code> → clear the current conversation.
+
+"
+            "💡 <b>PRO TIP</b>
+"
+            "<blockquote>For better results, include your context, goal, and preferred "
+            "answer format.</blockquote>
+
+"
+            "🚀 <b>Enjoy exploring.</b>",
+            parse_mode="html",
         )
 
     @app.on_message(filters.command("help"))
@@ -205,7 +220,7 @@ def register_handlers(app: Client) -> None:
     @app.on_message(filters.command("reset"))
     async def reset_cmd(client: Client, message: Message):
         _history.pop(message.chat.id, None)
-        await message.reply_text("Chat history for this chat has been cleared.", parse_mode=None)
+        await message.reply_text("Chat history for this chat has been cleared.", parse_mode="html")
 
     @app.on_message(filters.command("model"))
     async def model_cmd(client: Client, message: Message):
@@ -231,7 +246,7 @@ def register_handlers(app: Client) -> None:
             "🎛️ Gunakan /ai prompt untuk memilih provider "
             "dan model secara manual."
         ]
-        await message.reply_text("\n".join(lines), parse_mode=None)
+        await message.reply_text("\n".join(lines), parse_mode="html")
 
     def _is_admin(message: Message) -> bool:
         return bool(message.from_user and message.from_user.id in settings.admin_ids)
@@ -244,7 +259,7 @@ def register_handlers(app: Client) -> None:
             f"📊 BOT DATABASE\n\n"
             f"👥 Users started: {count_users()}\n"
             f"🗃️ Storage: {settings.database_path}",
-            parse_mode=None,
+            parse_mode="html",
         )
 
     @app.on_message(filters.command("broadcast"))
@@ -256,15 +271,15 @@ def register_handlers(app: Client) -> None:
                 "📣 Broadcast\n\n"
                 "Gunakan /broadcast pesan atau reply sebuah pesan "
                 "lalu kirim /broadcast.",
-                parse_mode=None,
+                parse_mode="html",
             )
             return
 
         targets = get_broadcast_targets()
         sent = failed = 0
         status = await message.reply_text(
-            f"📣 Menyiapkan broadcast ke {len(targets)} pengguna…",
-            parse_mode=None,
+            f"📣 Menyiapkan broadcast ke {len(targets)} users…",
+            parse_mode="html",
         )
 
         for chat_id in targets:
@@ -273,7 +288,7 @@ def register_handlers(app: Client) -> None:
                     await message.reply_to_message.copy(chat_id)
                 else:
                     text = message.text.split(None, 1)[1].strip()
-                    await client.send_message(chat_id, text, parse_mode=None)
+                    await client.send_message(chat_id, text, parse_mode="html")
                 sent += 1
             except Exception as exc:
                 failed += 1
@@ -284,10 +299,10 @@ def register_handlers(app: Client) -> None:
 
         await status.edit_text(
             "📣 BROADCAST SELESAI\n\n"
-            f"✅ Terkirim: {sent}\n"
-            f"⚠️ Gagal: {failed}\n"
-            f"👥 Target awal: {len(targets)}",
-            parse_mode=None,
+            f"✅ Sent: {sent}\n"
+            f"⚠️ Failed: {failed}\n"
+            f"👥 Initial targets: {len(targets)}",
+            parse_mode="html",
         )
 
     @app.on_message(filters.command("gitpull"))
@@ -297,8 +312,8 @@ def register_handlers(app: Client) -> None:
 
         status = await message.reply_text(
             "🔄 UPDATE DEPLOYMENT\n\n"
-            "Mengambil perubahan terbaru dari GitHub…",
-            parse_mode=None,
+            "Pulling the latest changes from GitHub…",
+            parse_mode="html",
         )
         try:
             repo = os.path.abspath(settings.git_repo_dir)
@@ -309,10 +324,10 @@ def register_handlers(app: Client) -> None:
             if pull.returncode != 0:
                 output = (pull.stderr or pull.stdout or "git pull gagal").strip()
                 await status.edit_text(
-                    "❌ UPDATE GAGAL\n\n"
+                    "❌ UPDATE FAILED\n\n"
                     + output[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                     + "",
-                    parse_mode=None,
+                    parse_mode="html",
                 )
                 return
 
@@ -325,10 +340,10 @@ def register_handlers(app: Client) -> None:
                 if pip.returncode != 0:
                     output = (pip.stderr or pip.stdout or "pip install gagal").strip()
                     await status.edit_text(
-                        "⚠️ KODE TERUPDATE, DEPENDENCY GAGAL\n\n"
+                        "⚠️ CODE UPDATED, DEPENDENCY INSTALL FAILED\n\n"
                         + output[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                         + "",
-                        parse_mode=None,
+                        parse_mode="html",
                     )
                     return
 
@@ -340,8 +355,8 @@ def register_handlers(app: Client) -> None:
             await status.edit_text(
                 "✅ UPDATE BERHASIL\n\n"
                 f"📌 Commit: {commit}\n"
-                "♻️ Bot sedang restart otomatis…",
-                parse_mode=None,
+                "♻️ Bot is restarting automatically…",
+                parse_mode="html",
             )
             await asyncio.sleep(1)
 
@@ -355,14 +370,14 @@ def register_handlers(app: Client) -> None:
                 "❌ UPDATE ERROR\n\n"
                 + str(exc)[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 + "",
-                parse_mode=None,
+                parse_mode="html",
             )
 
     @app.on_message(filters.command("ai"))
     async def ai_cmd(client: Client, message: Message):
         prompt = message.text.split(None, 1)[1].strip() if len(message.command) > 1 else ""
         if not prompt:
-            await message.reply_text("Usage: /ai <your question>", quote=True, parse_mode=None)
+            await message.reply_text("Usage: /ai <your question>", quote=True, parse_mode="html")
             return
         await _offer_provider_selection(message, prompt)
 
@@ -394,7 +409,7 @@ def register_handlers(app: Client) -> None:
         try:
             await callback_query.message.edit_text(
                 f"Provider: {PROVIDER_LABELS.get(provider, provider)}\nPick a model:",
-                parse_mode=None,
+                parse_mode="html",
                 reply_markup=_model_keyboard(provider, token),
             )
         except Exception:
@@ -415,7 +430,7 @@ def register_handlers(app: Client) -> None:
         try:
             await callback_query.message.edit_text(
                 "Pick a provider:",
-                parse_mode=None,
+                parse_mode="html",
                 reply_markup=_provider_keyboard(token),
             )
         except Exception:
