@@ -24,6 +24,17 @@ import os
 import subprocess
 import sys
 
+def _button(text: str, callback_data: str, style: str | None = None):
+    """Create a styled button: primary=blue, success=green, danger=red."""
+    kwargs = {"callback_data": callback_data}
+    if style in {"primary", "success", "danger"}:
+        kwargs["style"] = style
+    try:
+        return InlineKeyboardButton(text, **kwargs)
+    except (TypeError, ValueError):
+        kwargs.pop("style", None)
+        return InlineKeyboardButton(text, **kwargs)
+
 from pyrogram import Client, filters
 from pyrogram.types import (
     CallbackQuery,
