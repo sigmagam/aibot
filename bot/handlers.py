@@ -24,12 +24,43 @@ import os
 import subprocess
 import sys
 
-def _button(text: str, callback_data: str, style: ButtonStyle = ButtonStyle.DEFAULT):
-    return InlineKeyboardButton(
-        text=text,
-        callback_data=callback_data,
-        style=style,
-    )
+from pyrogram import Client, filters
+from pyrogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+
+from ai.models import (
+    MODEL_CATALOG,
+    MODEL_PRIORITY,
+    PROVIDER_LABELS,
+    default_candidates,
+    provider_candidates,
+)
+from ai.router import AllModelsFailedError, router
+from config import settings
+from database import (
+    count_users,
+    get_broadcast_targets,
+    init_db,
+    remove_user,
+    upsert_user,
+)
+from bot.mentions import extract_prompt
+from telegram_rich.stream import StreamingReplier
+
+logger = logging.getLogger("bot.handlers")
+
+# Telegram Bot API supports button styles as strings: primary, success, danger.
+# Keep this compatible with Kurigram/Pyrogram forks without requiring a
+# ButtonStyle enum that may not exist in the installed version.
+try:
+    from pyrogram.types import InlineKeyboardButton as _IKB
+    _SUPPORTS_BUTTON_STYLE = "style" in inspect.signature(_IKB).parameters
+except (ImportError, TypeError, ValueError):
+    _SUPPORTS_BUTTON_STYLE = False
 
 
 def _button(text: str, callback_data: str, style: str | None = None) -> InlineKeyboardButton:
@@ -115,7 +146,7 @@ def _provider_keyboard(token: str) -> InlineKeyboardMarkup:
         row = []
         for provider in providers[i : i + 2]:
             label = PROVIDER_LABELS.get(provider, provider)
-            row.append(_button(label, f"prov:{provider}:{token}", style=ButtonStyle.PRIMARY))
+            row.append(_button(label, f"prov:{provider}:{token}", style="primary"))
         rows.append(row)
     return InlineKeyboardMarkup(rows)
 
@@ -128,9 +159,9 @@ def _model_keyboard(provider: str, token: str) -> InlineKeyboardMarkup:
         for model in models[i : i + 2]:
             # short_name = last path segment, e.g. "cf/@cf/meta/llama-3.2-1b-instruct" -> "llama-3.2-1b-instruct"
             short_name = model.rsplit("/", 1)[-1]
-            row.append(_button(short_name, f"model:{model}:{token}", style=ButtonStyle.SUCCESS))
+            row.append(_button(short_name, f"model:{model}:{token}", style="success"))
         rows.append(row)
-    rows.append([_button("⬅️ Back to providers", f"back:{token}", style=ButtonStyle.DANGER)])
+    rows.append([_button("⬅️ Back to providers", f"back:{token}", style="danger")])
     return InlineKeyboardMarkup(rows)
 
 
