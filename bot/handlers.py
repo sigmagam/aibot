@@ -13,8 +13,7 @@ Two separate flows:
     rest of that provider, then a random fallback across every other
     provider if the whole chosen provider fails).
 """
-from future import annotations
-
+from __future__ import annotations
 import inspect
 import logging
 import time
