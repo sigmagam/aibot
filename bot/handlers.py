@@ -122,7 +122,7 @@ _BUTTON_ICONS = {
     "browse": "5372981976804366741",     # 🤖
     "reset": "4956591954088428445",      # 🧹
 }
-_ENABLE_BUTTON_ICONS = os.getenv("ENABLE_BUTTON_ICONS", "false").lower() == "true"
+_ENABLE_BUTTON_ICONS = os.getenv("ENABLE_BUTTON_ICONS", "true").lower() == "true"
 
 
 def _icon(key: str) -> str | None:

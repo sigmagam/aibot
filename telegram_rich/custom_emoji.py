@@ -55,7 +55,7 @@ EMOJI_MAP: dict[str, str] = {
     "🧹": "4956591954088428445",
 }
 
-ENABLE_CUSTOM_EMOJI = os.getenv("ENABLE_CUSTOM_EMOJI", "false").lower() == "true"
+ENABLE_CUSTOM_EMOJI = os.getenv("ENABLE_CUSTOM_EMOJI", "true").lower() == "true"
 
 # Longest keys first so a variation-selector variant (e.g. "⚡️") is matched
 # and replaced before its bare base character (e.g. "⚡").
