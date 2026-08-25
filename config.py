@@ -49,9 +49,16 @@ class Settings:
     stream_update_interval: float = _get_float("DRAFT_UPDATE_INTERVAL", 0.8)
 
     # --- Pending mode-selection buttons ---
-    # How long (seconds) a "Thinking / Direct" button stays valid before it
-    # expires and the user has to resend the prompt.
     pending_ttl: float = _get_float("PENDING_TTL", 600.0)
+
+    # --- SQLite / admin ---
+    database_path: str = os.getenv("DATABASE_PATH", "data/bot.db")
+    admin_ids: tuple[int, ...] = tuple(
+        int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",")
+        if x.strip().lstrip("-").isdigit()
+    )
+    git_branch: str = os.getenv("GIT_BRANCH", "main")
+    git_repo_dir: str = os.getenv("GIT_REPO_DIR", ".")
 
 
 settings = Settings()

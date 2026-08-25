@@ -20,6 +20,10 @@ import logging
 import time
 import uuid
 from collections import defaultdict, deque
+import asyncio
+import os
+import subprocess
+import sys
 
 from pyrogram import Client, filters
 from pyrogram.types import (
@@ -39,11 +43,12 @@ from ai.models import (
 from ai.router import AllModelsFailedError, router
 from bot.mentions import extract_prompt
 from config import settings
+from database import count_users, get_broadcast_targets, init_db, remove_user, upsert_user
 from telegram_rich.stream import StreamingReplier
 
 logger = logging.getLogger("bot.handlers")
 
-_COMMANDS = ["start", "help", "reset", "model", "ai"]
+_COMMANDS = ["start", "help", "reset", "model", "ai", "gitpull", "broadcast", "stats"]
 
 # Whether the installed Kurigram/Pyrogram version accepts the "style"
 # parameter on InlineKeyboardButton (Bot API 9.4, Feb 2026: "danger" /
@@ -149,9 +154,9 @@ def _model_keyboard(provider: str, token: str) -> InlineKeyboardMarkup:
         for model in models[i : i + 2]:
             # short_name = last path segment, e.g. "cf/@cf/meta/llama-3.2-1b-instruct" -> "llama-3.2-1b-instruct"
             short_name = model.rsplit("/", 1)[-1]
-            row.append(_button(short_name, f"model:{model}:{token}", style="primary"))
+            row.append(_button(short_name, f"model:{model}:{token}", style="success"))
         rows.append(row)
-    rows.append([_button("⬅️ Back to providers", f"back:{token}")])
+    rows.append([_button("⬅️ Back to providers", f"back:{token}", style="danger")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -174,17 +179,23 @@ async def _offer_provider_selection(message: Message, prompt: str) -> None:
 
 
 def register_handlers(app: Client) -> None:
+    init_db()
     @app.on_message(filters.command("start"))
     async def start_cmd(client: Client, message: Message):
+        upsert_user(message)
         await message.reply_text(
-            "Hi! I'm an AI bot.\n\n"
-            "Just type anything — private chat or group, no need to mention "
-            "me or use a command. I'll try claude-opus-4-6-thinking first, "
-            "then grok-4.5-high, then a random fallback if both fail.\n\n"
-            "Want to pick the provider and model yourself instead? Use "
-            "/ai <your question> — you'll get buttons to choose from.\n\n"
-            "Other commands: /reset (clear chat history), /model (list AI models).",
-            parse_mode=None,
+            "✨ <b>Selamat datang di AI Studio!</b>\n\n"
+            "Satu bot untuk ngobrol, coding, brainstorming, dan eksplorasi "
+            "berbagai model AI — langsung dari Telegram.\n\n"
+            "⚡ <b>Mulai cepat</b>\n"
+            "• Kirim pesan biasa → AI otomatis memilih model terbaik yang tersedia.\n"
+            "• <code>/ai pertanyaan kamu</code> → pilih provider & model sendiri.\n"
+            "• <code>/model</code> → lihat seluruh model yang tersedia.\n"
+            "• <code>/reset</code> → mulai percakapan dari awal.\n\n"
+            "💡 <b>Tips:</b> Untuk hasil terbaik, tulis konteks, tujuan, dan format "
+            "jawaban yang kamu inginkan.\n\n"
+            "Selamat bereksperimen. 🚀",
+            parse_mode="html",
         )
 
     @app.on_message(filters.command("help"))
@@ -198,18 +209,154 @@ def register_handlers(app: Client) -> None:
 
     @app.on_message(filters.command("model"))
     async def model_cmd(client: Client, message: Message):
-        lines = ["Default order for plain messages (no /ai):"]
+        total = sum(len(models) for models in MODEL_CATALOG.values())
+        lines = [
+            "🧩 <b>MODEL DIRECTORY</b>",
+            "",
+            f"📦 <b>{total} model</b> tersedia dari "
+            f"<b>{len(MODEL_CATALOG)} provider</b>.",
+            "",
+            "🤖 <b>Auto mode</b>",
+        ]
         for i, m in enumerate(MODEL_PRIORITY, start=1):
-            lines.append(f"{i}. {m}")
-        lines.append(
-            "\nIf both fail, the bot automatically tries random models from "
-            "every available provider."
+            lines.append(f"  {i}. <code>{m}</code>")
+        lines += ["", "📚 <b>Daftar provider & model</b>"]
+        for provider, models in MODEL_CATALOG.items():
+            label = PROVIDER_LABELS.get(provider, provider)
+            lines.append(f"\n<b>▸ {label}</b> <i>({len(models)} model)</i>")
+            for m in models:
+                lines.append(f"  • <code>{m}</code>")
+        lines += [
+            "",
+            "🎛️ Gunakan <code>/ai prompt</code> untuk memilih provider "
+            "dan model secara manual."
+        ]
+        await message.reply_text("\n".join(lines), parse_mode="html")
+
+    def _is_admin(message: Message) -> bool:
+        return bool(message.from_user and message.from_user.id in settings.admin_ids)
+
+    @app.on_message(filters.command("stats"))
+    async def stats_cmd(client: Client, message: Message):
+        if not _is_admin(message):
+            return
+        await message.reply_text(
+            f"📊 <b>BOT DATABASE</b>\n\n"
+            f"👥 Users started: <b>{count_users()}</b>\n"
+            f"🗃️ Storage: <code>{settings.database_path}</code>",
+            parse_mode="html",
         )
-        lines.append(
-            "\nUse /ai <question> instead to pick the provider and model "
-            "yourself via buttons."
+
+    @app.on_message(filters.command("broadcast"))
+    async def broadcast_cmd(client: Client, message: Message):
+        if not _is_admin(message):
+            return
+        if len(message.command) < 2 and not message.reply_to_message:
+            await message.reply_text(
+                "📣 <b>Broadcast</b>\n\n"
+                "Gunakan <code>/broadcast pesan</code> atau reply sebuah pesan "
+                "lalu kirim <code>/broadcast</code>.",
+                parse_mode="html",
+            )
+            return
+
+        targets = get_broadcast_targets()
+        sent = failed = 0
+        status = await message.reply_text(
+            f"📣 Menyiapkan broadcast ke <b>{len(targets)}</b> pengguna…",
+            parse_mode="html",
         )
-        await message.reply_text("\n".join(lines), parse_mode=None)
+
+        for chat_id in targets:
+            try:
+                if message.reply_to_message:
+                    await message.reply_to_message.copy(chat_id)
+                else:
+                    text = message.text.split(None, 1)[1].strip()
+                    await client.send_message(chat_id, text, parse_mode=None)
+                sent += 1
+            except Exception as exc:
+                failed += 1
+                # A blocked/deleted chat should not be retried forever.
+                if "USER_IS_BLOCKED" in str(exc) or "PEER_ID_INVALID" in str(exc):
+                    remove_user(chat_id)
+            await asyncio.sleep(0.05)
+
+        await status.edit_text(
+            "📣 <b>BROADCAST SELESAI</b>\n\n"
+            f"✅ Terkirim: <b>{sent}</b>\n"
+            f"⚠️ Gagal: <b>{failed}</b>\n"
+            f"👥 Target awal: <b>{len(targets)}</b>",
+            parse_mode="html",
+        )
+
+    @app.on_message(filters.command("gitpull"))
+    async def gitpull_cmd(client: Client, message: Message):
+        if not _is_admin(message):
+            return
+
+        status = await message.reply_text(
+            "🔄 <b>UPDATE DEPLOYMENT</b>\n\n"
+            "Mengambil perubahan terbaru dari GitHub…",
+            parse_mode="html",
+        )
+        try:
+            repo = os.path.abspath(settings.git_repo_dir)
+            pull = subprocess.run(
+                ["git", "-C", repo, "pull", "--ff-only", "origin", settings.git_branch],
+                capture_output=True, text=True, timeout=120,
+            )
+            if pull.returncode != 0:
+                output = (pull.stderr or pull.stdout or "git pull gagal").strip()
+                await status.edit_text(
+                    "❌ <b>UPDATE GAGAL</b>\n\n<pre>"
+                    + output[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                    + "</pre>",
+                    parse_mode="html",
+                )
+                return
+
+            req = os.path.join(repo, "requirements.txt")
+            if os.path.exists(req):
+                pip = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-r", req, "-q"],
+                    capture_output=True, text=True, timeout=180,
+                )
+                if pip.returncode != 0:
+                    output = (pip.stderr or pip.stdout or "pip install gagal").strip()
+                    await status.edit_text(
+                        "⚠️ <b>KODE TERUPDATE, DEPENDENCY GAGAL</b>\n\n<pre>"
+                        + output[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        + "</pre>",
+                        parse_mode="html",
+                    )
+                    return
+
+            commit = subprocess.run(
+                ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip() or "unknown"
+
+            await status.edit_text(
+                "✅ <b>UPDATE BERHASIL</b>\n\n"
+                f"📌 Commit: <code>{commit}</code>\n"
+                "♻️ Bot sedang restart otomatis…",
+                parse_mode="html",
+            )
+            await asyncio.sleep(1)
+
+            # Replace the current process so systemd/supervisor still sees
+            # one bot process and the updated code is loaded immediately.
+            os.chdir(repo)
+            os.execv(sys.executable, [sys.executable, os.path.join(repo, "main.py")])
+
+        except Exception as exc:
+            await status.edit_text(
+                "❌ <b>UPDATE ERROR</b>\n\n<pre>"
+                + str(exc)[-3500:].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                + "</pre>",
+                parse_mode="html",
+            )
 
     @app.on_message(filters.command("ai"))
     async def ai_cmd(client: Client, message: Message):

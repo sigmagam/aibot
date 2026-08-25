@@ -1,68 +1,23 @@
-# Git
-.git/
-
-# Environment
+# Secrets
 .env
 .env.*
 !.env.example
 
-# Virtual environment
-venv/
-.venv/
-env/
-ENV/
-
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.so
+.venv/
+venv/
+env/
 
-# Build / distribution
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# Testing / coverage
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-
-# Type checker / linter cache
-.mypy_cache/
-.pyre/
-.ruff_cache/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# IDE / Editor
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+# Runtime
+data/
+*.session
+*.session-journal
 *.log
 
-# Temporary files
-*.tmp
-*.temp
-
-# Local databases
-*.sqlite
-*.sqlite3
-
-# Secrets / credentials
-*.pem
-*.key
-credentials.json
-service-account.json
-secrets.json
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

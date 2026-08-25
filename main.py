@@ -8,6 +8,7 @@ explicit /ai <prompt> command anywhere.
 from __future__ import annotations
 
 import logging
+import os
 
 from bot.client import create_client
 from bot.handlers import register_handlers
@@ -21,6 +22,7 @@ logger = logging.getLogger("main")
 
 
 def main() -> None:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     validate()
     app = create_client()
     register_handlers(app)

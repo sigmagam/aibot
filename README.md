@@ -113,3 +113,31 @@ Lost on process restart. Use `/reset` to clear it manually.
 - Make sure the bot's **Privacy Mode** is disabled in @BotFather
   (`/setprivacy` → `Disable`) if it's not a group admin and you still
   want it to see every group message.
+
+## Admin, SQLite & deployment commands
+
+Users are registered in a local SQLite database when they use `/start`.
+The database file defaults to `data/bot.db` and is intentionally local.
+
+Set `ADMIN_IDS` to the numeric Telegram user ID(s) of trusted administrators.
+Admins get:
+
+- `/stats` — database/user count.
+- `/broadcast pesan` — send a text broadcast to every user who has started the bot.
+- Reply to a message + `/broadcast` — copy that message to every registered user.
+- `/gitpull` — `git pull --ff-only`, install `requirements.txt`, then replace the
+  running Python process with the updated `main.py`.
+
+The `/gitpull` command is intentionally admin-only. Keep `ADMIN_IDS` private.
+
+## Button colors
+
+The provider picker uses **primary (blue)** buttons, model choices use
+**success (green)** buttons, and navigation/back uses **danger (red)**.
+The `style` argument is feature-detected so older Kurigram versions continue
+to work without crashing.
+
+## GitHub
+
+Commit `data/bot.db` only if you deliberately want to version the database.
+For a normal deployment it should remain ignored and backed up separately.
