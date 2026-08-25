@@ -1,0 +1,200 @@
+"""
+Model catalog, taken from the 9.todict.tech dashboard (provider screenshots).
+
+MODEL_PRIORITY  -> default auto-flow order tried first for plain messages
+    (typed directly, mention, or reply-to-bot — no /ai involved):
+    1. ag/claude-opus-4-6-thinking (Antigravity)
+    2. gcli/grok-4.5-high          (Grok CLI / Grok Build)
+
+MODEL_CATALOG   -> every model visible on the dashboard, grouped by
+    provider. Used both as the random fallback pool when MODEL_PRIORITY
+    fails, and as the provider/model picker for the /ai command.
+"""
+from __future__ import annotations
+
+import random
+
+# Default auto-flow order, tried first for plain (non-/ai) messages.
+MODEL_PRIORITY: list[str] = [
+    "ag/claude-opus-4-6-thinking",  # priority 1
+    "gcli/grok-4.5-high",           # priority 2
+]
+
+# Models known to support "thinking" / reasoning streaming. Used to decide
+# whether the reasoning stream gets shown as an expandable blockquote.
+THINKING_MODELS: set[str] = {
+    "gcli/grok-4.5-high",
+    "gcli/grok-4.5",
+    "gcli/grok-4.5-medium",
+    "gcli/grok-4.5-low",
+    "ag/claude-opus-4-6-thinking",
+    "ag/claude-sonnet-4-6",
+    "ag/gemini-pro-agent",
+    "ag/gemini-3-flash-agent",
+}
+
+# Display labels for the /ai provider picker.
+PROVIDER_LABELS: dict[str, str] = {
+    "antigravity": "Antigravity",
+    "nvidia": "NVIDIA NIM",
+    "groq": "Groq",
+    "gemini": "Gemini",
+    "gemini_cli": "Gemini CLI",
+    "opencode_free": "OpenCode Free",
+    "grok_cli": "Grok CLI",
+    "cloudflare": "Cloudflare",
+    "mistral": "Mistral",
+}
+
+# Full per-provider catalog (mirrors the dashboard screenshot).
+MODEL_CATALOG: dict[str, list[str]] = {
+    "antigravity": [
+        "ag/gemini-3.7-flash-high",
+        "ag/gemini-3.7-flash-medium",
+        "ag/gemini-3.7-flash-low",
+        "ag/gemini-3.6-flash-high",
+        "ag/gemini-3.6-flash-medium",
+        "ag/gemini-3.6-flash-low",
+        "ag/gemini-3.5-flash-high",
+        "ag/gemini-3-flash-agent",
+        "ag/gemini-3.5-flash-low",
+        "ag/gemini-3.5-flash-extra-low",
+        "ag/gemini-pro-agent",
+        "ag/gemini-3.1-pro-low",
+        "ag/claude-sonnet-4-6",
+        "ag/claude-opus-4-6-thinking",
+        "ag/gpt-oss-120b-medium",
+        "ag/gemini-3-flash",
+    ],
+    "nvidia": [
+        "nvidia/minimaxai/minimax-m2.7",
+        "nvidia/z-ai/glm-5.2",
+        "nvidia/deepseek-ai/deepseek-v4-pro",
+        "nvidia/deepseek-ai/deepseek-v4-flash",
+        "nvidia/moonshotai/kimi-k2.6",
+        "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
+    ],
+    "groq": [
+        "groq/llama-3.3-70b-versatile",
+        "groq/meta-llama/llama-4-maverick-17b-128e-instruct",
+        "groq/qwen/qwen3-32b",
+        "groq/openai/gpt-oss-120b",
+    ],
+    "gemini": [
+        "gemini/gemini-3.7-flash",
+        "gemini/gemini-3.6-flash",
+        "gemini/gemini-3.5-flash-lite",
+        "gemini/gemini-3.1-pro-preview",
+        "gemini/gemini-3.1-flash-lite-preview",
+        "gemini/gemini-3-flash-preview",
+        "gemini/gemini-2.5-pro",
+        "gemini/gemini-2.5-flash",
+        "gemini/gemini-2.5-flash-lite",
+        "gemini/gemma-4-31b-it",
+    ],
+    "gemini_cli": [
+        "gc/gemini-3.1-pro-preview",
+        "gc/gemini-3-pro-preview",
+        "gc/gemini-3-flash-preview",
+        "gc/gemini-3.1-flash-lite-preview",
+        "gc/gemini-2.5-pro",
+        "gc/gemini-2.5-flash",
+        "gc/gemini-2.5-flash-lite",
+    ],
+    "opencode_free": [
+        "oc/deepseek-v4-flash-free",
+        "oc/x-preview-f-free",
+        "oc/nemotron-3.5-lightning-free",
+        "oc/muse-spark-1.2-contributor-free",
+        "oc/mimo-v2.5-free",
+        "oc/hy3-free",
+        "oc/laguna-s-2.1-free",
+        "oc/big-pickle",
+        "oc/nemotron-3-ultra-free",
+    ],
+    "grok_cli": [
+        "gcli/grok-build",
+        "gcli/grok-4.5",
+        "gcli/grok-4.5-high",
+        "gcli/grok-4.5-medium",
+        "gcli/grok-4.5-low",
+    ],
+    "cloudflare": [
+        "cf/@cf/meta/llama-3.2-1b-instruct",
+        "cf/@cf/meta/llama-3.2-3b-instruct",
+        "cf/@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+        "cf/@cf/meta/llama-3.1-8b-instruct-awq",
+        "cf/@cf/mistralai/mistral-small-3.1-24b-instruct",
+        "cf/@cf/meta/llama-3.1-70b-instruct-fp8-fast",
+        "cf/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "cf/@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+        "cf/@cf/moonshotai/kimi-k2.5",
+        "cf/@cf/moonshotai/kimi-k2.6",
+        "cf/@cf/zai-org/glm-4.7-flash",
+        "cf/@cf/qwen/qwq-32b",
+        "cf/@cf/qwen/qwen2.5-coder-32b-instruct",
+    ],
+    "mistral": [
+        "mistral/mistral-large-latest",
+        "mistral/codestral-latest",
+        "mistral/mistral-medium-latest",
+    ],
+}
+
+
+def all_models() -> list[str]:
+    """Flatten every model from every provider into a single list."""
+    models: list[str] = []
+    for provider_models in MODEL_CATALOG.values():
+        models.extend(provider_models)
+    return models
+
+
+def is_thinking_model(model: str) -> bool:
+    return model in THINKING_MODELS or model.endswith("-thinking")
+
+
+def provider_of(model: str) -> str | None:
+    """Look up which provider key a given model id belongs to."""
+    for provider, models in MODEL_CATALOG.items():
+        if model in models:
+            return provider
+    return None
+
+
+def pick_random_fallback(exclude: set[str]) -> list[str]:
+    """
+    Build a shuffled fallback model order (outside MODEL_PRIORITY and
+    anything already tried / excluded), so there's always another option
+    left if one fails.
+    """
+    pool = [m for m in all_models() if m not in exclude]
+    random.shuffle(pool)
+    return pool
+
+
+def default_candidates() -> list[str]:
+    """
+    Candidate order for a plain message (typed directly, mention, or
+    reply-to-bot — no /ai involved): MODEL_PRIORITY in order first
+    (claude-opus-4-6-thinking, then grok-4.5-high), then a shuffled
+    fallback across the rest of the catalog if both fail.
+    """
+    rest = pick_random_fallback(exclude=set(MODEL_PRIORITY))
+    return [*MODEL_PRIORITY, *rest]
+
+
+def provider_candidates(provider: str, chosen_model: str) -> list[str]:
+    """
+    Candidate order for the /ai flow once a provider + model were picked:
+    the chosen model first, then the rest of that same provider's models
+    as same-provider fallback, then a shuffled fallback across every
+    other provider if the whole chosen provider fails.
+    """
+    provider_models = list(MODEL_CATALOG.get(provider, []))
+    same_provider_rest = [m for m in provider_models if m != chosen_model]
+    random.shuffle(same_provider_rest)
+
+    other_pool = pick_random_fallback(exclude=set(provider_models))
+
+    return [chosen_model, *same_provider_rest, *other_pool]
