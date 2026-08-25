@@ -27,6 +27,7 @@ UI conventions used throughout this file:
 from __future__ import annotations
 import inspect
 import logging
+import re
 import time
 import uuid
 from collections import defaultdict, deque
@@ -91,6 +92,12 @@ if ButtonStyle is not None:
 _SUPPORTS_BUTTON_STYLE = "style" in inspect.signature(InlineKeyboardButton).parameters
 _SUPPORTS_CUSTOM_EMOJI = "icon_custom_emoji_id" in inspect.signature(InlineKeyboardButton).parameters
 
+# Matches a leading emoji (+ optional VS16 U+FE0F) followed by a space, e.g.
+# "🧠 " or "⬅️ " at the start of a button label.
+_LEADING_EMOJI_RE = re.compile(
+    r"^[\U0001F300-\U0001FAFF\u2600-\u27BF\u2190-\u21FF\u2B00-\u2BFF]\uFE0F?\s+"
+)
+
 
 def _button(
     text: str,
@@ -100,12 +107,16 @@ def _button(
 ) -> InlineKeyboardButton:
     """Build an inline button, applying a color style and/or a custom-emoji
     icon when the running Kurigram/Pyrogram fork supports them (falls back
-    to a plain button otherwise, so this never crashes on older forks)."""
+    to a plain button otherwise, so this never crashes on older forks).
+    When an icon is applied, any leading plain emoji + space already in
+    `text` is stripped so the emoji doesn't show up twice (once as the
+    custom-emoji icon, once as plain Unicode text)."""
     kwargs: dict = {}
     if style and _SUPPORTS_BUTTON_STYLE and style in _STYLE_MAP:
         kwargs["style"] = _STYLE_MAP[style]
     if icon_custom_emoji_id and _SUPPORTS_CUSTOM_EMOJI:
         kwargs["icon_custom_emoji_id"] = icon_custom_emoji_id
+        text = _LEADING_EMOJI_RE.sub("", text, count=1)
     return InlineKeyboardButton(text, callback_data=callback_data, **kwargs)
 
 
