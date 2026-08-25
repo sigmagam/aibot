@@ -24,48 +24,12 @@ import os
 import subprocess
 import sys
 
-def _button(text: str, callback_data: str, style: str | None = None):
-    """Create a styled button: primary=blue, success=green, danger=red."""
-    kwargs = {"callback_data": callback_data}
-    if style in {"primary", "success", "danger"}:
-        kwargs["style"] = style
-    try:
-        return InlineKeyboardButton(text, **kwargs)
-    except (TypeError, ValueError):
-        kwargs.pop("style", None)
-        return InlineKeyboardButton(text, **kwargs)
-
-from pyrogram import Client, filters
-from pyrogram.types import (
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
-
-from ai.models import (
-    MODEL_CATALOG,
-    MODEL_PRIORITY,
-    PROVIDER_LABELS,
-    default_candidates,
-    provider_candidates,
-)
-from ai.router import AllModelsFailedError, router
-from bot.mentions import extract_prompt
-from config import settings
-from database import count_users, get_broadcast_targets, init_db, remove_user, upsert_user
-from telegram_rich.stream import StreamingReplier
-
-logger = logging.getLogger("bot.handlers")
-
-_COMMANDS = ["start", "help", "reset", "model", "ai", "gitpull", "broadcast", "stats"]
-
-# Whether the installed Kurigram/Pyrogram version accepts the "style"
-# parameter on InlineKeyboardButton (Bot API 9.4, Feb 2026: "danger" /
-# "success" / "primary" button colors). Checked once at import time so
-# we never crash on an older library version that doesn't have it yet —
-# styling is applied automatically as soon as the library catches up.
-_SUPPORTS_BUTTON_STYLE = "style" in inspect.signature(InlineKeyboardButton).parameters
+def _button(text: str, callback_data: str, style: ButtonStyle = ButtonStyle.DEFAULT):
+    return InlineKeyboardButton(
+        text=text,
+        callback_data=callback_data,
+        style=style,
+    )
 
 
 def _button(text: str, callback_data: str, style: str | None = None) -> InlineKeyboardButton:
@@ -151,7 +115,7 @@ def _provider_keyboard(token: str) -> InlineKeyboardMarkup:
         row = []
         for provider in providers[i : i + 2]:
             label = PROVIDER_LABELS.get(provider, provider)
-            row.append(_button(label, f"prov:{provider}:{token}", style="primary"))
+            row.append(_button(label, f"prov:{provider}:{token}", style=ButtonStyle.PRIMARY))
         rows.append(row)
     return InlineKeyboardMarkup(rows)
 
@@ -164,9 +128,9 @@ def _model_keyboard(provider: str, token: str) -> InlineKeyboardMarkup:
         for model in models[i : i + 2]:
             # short_name = last path segment, e.g. "cf/@cf/meta/llama-3.2-1b-instruct" -> "llama-3.2-1b-instruct"
             short_name = model.rsplit("/", 1)[-1]
-            row.append(_button(short_name, f"model:{model}:{token}", style="success"))
+            row.append(_button(short_name, f"model:{model}:{token}", style=ButtonStyle.SUCCESS))
         rows.append(row)
-    rows.append([_button("⬅️ Back to providers", f"back:{token}", style="danger")])
+    rows.append([_button("⬅️ Back to providers", f"back:{token}", style=ButtonStyle.DANGER)])
     return InlineKeyboardMarkup(rows)
 
 
