@@ -1,13 +1,13 @@
 """
 Lightweight Markdown (the style most LLMs output) -> HTML conversion for
-Telegram's parse_mode: , , , , .
+Telegram's parse_mode: HTML (<b>, <i>, <code>, <pre>, <blockquote>).
 
 No external library, so it's easy to tweak. Handles:
-    **bold** / __bold__          -> ...
-    *italic* / _italic_          -> ...
-    `inline code`                -> ...
-    ```lang\ncode```              -> ...
-    lines starting with "> "     -> ...
+    **bold** / __bold__          -> <b>...</b>
+    *italic* / _italic_          -> <i>...</i>
+    `inline code`                -> <code>...</code>
+    ```lang\ncode```              -> <pre><code class="language-lang">...</code></pre>
+    lines starting with "> "     -> <blockquote>...</blockquote>
 """
 from __future__ import annotations
 
@@ -30,7 +30,10 @@ def md_to_html(text: str) -> str:
     def _stash_block(m: re.Match) -> str:
         lang = m.group(1)
         code = html.escape(m.group(2).strip("\n"))
-        tag = f'{code}' if lang else f"{code}"
+        if lang:
+            tag = f'<pre><code class="language-{html.escape(lang)}">{code}</code></pre>'
+        else:
+            tag = f"<pre>{code}</pre>"
         blocks.append(tag)
         return f"\x00BLOCK{len(blocks) - 1}\x00"
 
@@ -40,7 +43,7 @@ def md_to_html(text: str) -> str:
     inline: list[str] = []
 
     def _stash_inline(m: re.Match) -> str:
-        inline.append(f"{html.escape(m.group(1))}")
+        inline.append(f"<code>{html.escape(m.group(1))}</code>")
         return f"\x00INLINE{len(inline) - 1}\x00"
 
     text = _INLINE_CODE_RE.sub(_stash_inline, text)
@@ -49,8 +52,8 @@ def md_to_html(text: str) -> str:
     text = html.escape(text)
 
     # 4) Bold & italic.
-    text = _BOLD_RE.sub(lambda m: f"{m.group(1) or m.group(2)}", text)
-    text = _ITALIC_RE.sub(lambda m: f"{m.group(1) or m.group(2)}", text)
+    text = _BOLD_RE.sub(lambda m: f"<b>{m.group(1) or m.group(2)}</b>", text)
+    text = _ITALIC_RE.sub(lambda m: f"<i>{m.group(1) or m.group(2)}</i>", text)
 
     # 5) Blockquote: group consecutive lines starting with "> " (already
     # escaped to "&gt; " by this point).
@@ -59,7 +62,7 @@ def md_to_html(text: str) -> str:
 
     def _flush_quote() -> None:
         if quote_buf:
-            out_lines.append("" + "\n".join(quote_buf) + "")
+            out_lines.append("<blockquote>" + "\n".join(quote_buf) + "</blockquote>")
             quote_buf.clear()
 
     for line in text.split("\n"):
