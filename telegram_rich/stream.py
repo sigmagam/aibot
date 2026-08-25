@@ -1,11 +1,11 @@
 """
 StreamingReplier: sends a model's answer to Telegram as it streams in,
 periodically editing one message and auto-formatting Markdown -> HTML
-(, , , , <blockquote>).
+(, , , , ).
 
 When `show_reasoning=True` (the user picked "Thinking" mode), reasoning
 tokens are accumulated and rendered inside a native Telegram *expandable*
-blockquote (`<blockquote expandable>`) above the final answer, so people
+blockquote (``) above the final answer, so people
 can tap to see the model's reasoning without it cluttering the chat.
 When `show_reasoning=False` ("Direct" mode), reasoning tokens are simply
 discarded and only a "typing..." chat action is refreshed while we wait
@@ -70,7 +70,7 @@ class StreamingReplier:
     def _render(self) -> str:
         parts: list[str] = []
         if self._show_reasoning and self._reasoning:
-            parts.append(f"<blockquote expandable>🧠 {md_to_html(self._reasoning)}</blockquote>")
+            parts.append(f"🧠 {md_to_html(self._reasoning)}")
         if self._content:
             parts.append(md_to_html(self._content))
         return "\n".join(parts) if parts else "…"

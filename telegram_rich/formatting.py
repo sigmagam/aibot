@@ -1,13 +1,13 @@
 """
 Lightweight Markdown (the style most LLMs output) -> HTML conversion for
-Telegram's parse_mode: , , , , <blockquote>.
+Telegram's parse_mode: , , , , .
 
 No external library, so it's easy to tweak. Handles:
     **bold** / __bold__          -> ...
     *italic* / _italic_          -> ...
     `inline code`                -> ...
-    ```lang\ncode```              -> <code class="language-lang">...
-    lines starting with "> "     -> <blockquote>...</blockquote>
+    ```lang\ncode```              -> ...
+    lines starting with "> "     -> ...
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def md_to_html(text: str) -> str:
     def _stash_block(m: re.Match) -> str:
         lang = m.group(1)
         code = html.escape(m.group(2).strip("\n"))
-        tag = f'<code class="language-{lang}">{code}' if lang else f"{code}"
+        tag = f'{code}' if lang else f"{code}"
         blocks.append(tag)
         return f"\x00BLOCK{len(blocks) - 1}\x00"
 
@@ -59,7 +59,7 @@ def md_to_html(text: str) -> str:
 
     def _flush_quote() -> None:
         if quote_buf:
-            out_lines.append("<blockquote>" + "\n".join(quote_buf) + "</blockquote>")
+            out_lines.append("" + "\n".join(quote_buf) + "")
             quote_buf.clear()
 
     for line in text.split("\n"):
