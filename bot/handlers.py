@@ -37,7 +37,7 @@ import subprocess
 import sys
 
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ChatType, ParseMode
 from pyrogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -356,6 +356,15 @@ def register_handlers(app: Client) -> None:
     @app.on_message(filters.command("start"))
     async def start_cmd(client: Client, message: Message):
         upsert_user(message)
+
+        # Message effects (Kurigram's `effect_id`, not the Bot-API-style
+        # `message_effect_id`) only work in private chats — Telegram
+        # rejects/ignores them in groups and channels, so only pass it
+        # there.
+        extra_kwargs: dict = {}
+        if message.chat.type == ChatType.PRIVATE and settings.start_effect_id:
+            extra_kwargs["effect_id"] = int(settings.start_effect_id)
+
         await message.reply_text(
             "╭────────────────────────╮\n"
             "        ✦ <b>AI STUDIO</b> ✦\n"
@@ -384,6 +393,7 @@ def register_handlers(app: Client) -> None:
                     ]
                 ]
             ),
+            **extra_kwargs,
         )
 
     @app.on_message(filters.command("help"))

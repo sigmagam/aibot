@@ -38,10 +38,9 @@ class Settings:
     # --- Bot behavior ---
     max_history: int = _get_int("MAX_HISTORY", 12)  # messages remembered per chat
     session_name: str = os.getenv("TG_SESSION_NAME", "ai_bot")
-    system_prompt: str = os.getenv(
-        "SYSTEM_PROMPT",
+    system_prompt: str = (
         "You are a friendly, concise AI assistant. Always reply in the same "
-        "language the user writes in (default to Indonesian if unclear).",
+        "language the user writes in (default to Indonesian if unclear)."
     )
 
     # --- Streaming reply throttling ---
@@ -50,6 +49,13 @@ class Settings:
 
     # --- Pending mode-selection buttons ---
     pending_ttl: float = _get_float("PENDING_TTL", 600.0)
+
+    # --- Message effect (private chats only) ---
+    # Kurigram calls this `effect_id` (NOT `message_effect_id`, that's the
+    # raw Bot API name). Only applied in private chats — Telegram doesn't
+    # support message effects in groups/channels, and Kurigram will error
+    # if you try. See: https://docs.kurigram.icu/api/methods/get_available_effects/
+    start_effect_id: str = os.getenv("START_EFFECT_ID", "5159385139981059251")
 
     # --- SQLite / admin ---
     database_path: str = os.getenv("DATABASE_PATH", "data/bot.db")
