@@ -2,16 +2,19 @@
 Helpers to decide whether an incoming message should trigger the AI, and
 to build the prompt text out of it.
 
-In private chats every text message is treated as a prompt. In groups /
-supergroups, only messages that @mention the bot or are a reply to one of
-the bot's own messages trigger a response — otherwise the bot would answer
-every single message sent by anyone in every group it's a member of.
+Every text message triggers a response, in private chats and in groups /
+supergroups alike (mention / reply-to-bot still gets stripped into a clean
+prompt if present, but is no longer required in groups). Note that in
+groups this only works if the bot actually *receives* the message: unless
+the bot is a group admin, Telegram's Bot API "Privacy Mode" (set via
+@BotFather -> /setprivacy) hides plain messages from the bot entirely, so
+Privacy Mode must be disabled for this to work — see README.md.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from pyrogram.enums import ChatType, MessageEntityType
+from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
 
@@ -34,18 +37,16 @@ def _mentions_bot(message: Message, bot_username: str) -> bool:
 
 
 def should_respond(message: Message, bot_username: str) -> bool:
-    """True if this message should be treated as an AI prompt at all."""
-    if message.chat and message.chat.type == ChatType.PRIVATE:
-        return True
+    """
+    True if this message should be treated as an AI prompt at all.
 
-    if _mentions_bot(message, bot_username):
-        return True
-
-    reply = message.reply_to_message
-    if reply and reply.from_user and getattr(reply.from_user, "is_self", False):
-        return True
-
-    return False
+    Always True for a plain text/caption message — private chat or group,
+    mentioned or not. This only decides *whether we treat it as a prompt*;
+    whether the bot ever sees the message in the first place (in a group,
+    without a mention) is governed by Telegram's Privacy Mode setting on
+    the bot, not by this function.
+    """
+    return True
 
 
 def extract_prompt(message: Message, bot_username: str) -> Optional[str]:
