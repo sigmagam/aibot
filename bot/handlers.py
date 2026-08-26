@@ -27,7 +27,6 @@ UI conventions used throughout this file:
 from __future__ import annotations
 import inspect
 import logging
-import re
 import time
 import uuid
 from collections import defaultdict, deque
@@ -66,7 +65,7 @@ from database import (
     remove_user,
     upsert_user,
 )
-from bot.mentions import extract_prompt, should_respond
+from bot.mentions import extract_prompt
 from telegram_rich.stream import StreamingReplier
 
 logger = logging.getLogger("bot.handlers")
@@ -75,13 +74,6 @@ logger = logging.getLogger("bot.handlers")
 _COMMANDS = [
     "start", "help", "reset", "model", "stats", "broadcast", "gitpull", "ai"
 ]
-
-# Matches "/cmd@SomeBotUsername ..." so we can tell a command meant for a
-# *different* bot apart from plain chat text — filters.command() only
-# matches this bot's own username (or no username), so without this check
-# "/start@OtherBot" in a group would fall through to on_text and get sent
-# to the AI as if it were a normal prompt.
-_COMMAND_FOR_OTHER_BOT_RE = re.compile(r"^/\w+@(\w+)", re.IGNORECASE)
 
 HTML = ParseMode.HTML
 
@@ -99,12 +91,6 @@ if ButtonStyle is not None:
 _SUPPORTS_BUTTON_STYLE = "style" in inspect.signature(InlineKeyboardButton).parameters
 _SUPPORTS_CUSTOM_EMOJI = "icon_custom_emoji_id" in inspect.signature(InlineKeyboardButton).parameters
 
-# Matches a leading emoji (+ optional VS16 U+FE0F) followed by a space, e.g.
-# "🧠 " or "⬅️ " at the start of a button label.
-_LEADING_EMOJI_RE = re.compile(
-    r"^[\U0001F300-\U0001FAFF\u2600-\u27BF\u2190-\u21FF\u2B00-\u2BFF]\uFE0F?\s+"
-)
-
 
 def _button(
     text: str,
@@ -114,16 +100,12 @@ def _button(
 ) -> InlineKeyboardButton:
     """Build an inline button, applying a color style and/or a custom-emoji
     icon when the running Kurigram/Pyrogram fork supports them (falls back
-    to a plain button otherwise, so this never crashes on older forks).
-    When an icon is applied, any leading plain emoji + space already in
-    `text` is stripped so the emoji doesn't show up twice (once as the
-    custom-emoji icon, once as plain Unicode text)."""
+    to a plain button otherwise, so this never crashes on older forks)."""
     kwargs: dict = {}
     if style and _SUPPORTS_BUTTON_STYLE and style in _STYLE_MAP:
         kwargs["style"] = _STYLE_MAP[style]
     if icon_custom_emoji_id and _SUPPORTS_CUSTOM_EMOJI:
         kwargs["icon_custom_emoji_id"] = icon_custom_emoji_id
-        text = _LEADING_EMOJI_RE.sub("", text, count=1)
     return InlineKeyboardButton(text, callback_data=callback_data, **kwargs)
 
 
@@ -355,7 +337,7 @@ def register_handlers(app: Client) -> None:
             "\n".join(lines),
             parse_mode=HTML,
             reply_markup=InlineKeyboardMarkup(
-                [[_button("🧭 Pick provider & model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))]]
+                [[_button("🧭 Pick provider &amp; model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))]]
             ),
         )
 
@@ -498,18 +480,6 @@ def register_handlers(app: Client) -> None:
     async def on_text(client: Client, message: Message):
         me = client.me  # cached bot identity (username etc.), set by Kurigram at startup
         bot_username = me.username if me else ""
-
-        text = message.text or ""
-        other_bot_match = _COMMAND_FOR_OTHER_BOT_RE.match(text)
-        if other_bot_match and other_bot_match.group(1).lower() != bot_username.lower():
-            # e.g. "/start@SomeOtherBot" in a group chat with several bots —
-            # not addressed to us, so don't treat it as a prompt.
-            return
-
-        if not should_respond(message, bot_username):
-            # In groups: only mentions/replies-to-us trigger a response, so
-            # the bot doesn't answer every message everyone else sends.
-            return
 
         prompt = extract_prompt(message, bot_username)
         if not prompt:
