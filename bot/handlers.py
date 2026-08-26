@@ -355,7 +355,7 @@ def register_handlers(app: Client) -> None:
             "\n".join(lines),
             parse_mode=HTML,
             reply_markup=InlineKeyboardMarkup(
-                [[_button("🧭 Pick provider &amp; model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))]]
+                [[_button("🧭 Pick provider & model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))]]
             ),
         )
 
