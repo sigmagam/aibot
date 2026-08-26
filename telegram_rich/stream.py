@@ -61,6 +61,7 @@ class StreamingReplier:
         self._reasoning = ""
         self._content = ""
         self._last_edit = 0.0
+        self._over_threshold_notified = False
 
     @property
     def content(self) -> str:
@@ -109,7 +110,19 @@ class StreamingReplier:
             # Already too long for a single Telegram message — stop editing
             # it every tick (those edits would just keep failing / getting
             # truncated). finish() will swap this to a paste.rs link once
-            # the stream ends.
+            # the stream ends. Tell the user once so it doesn't just look
+            # frozen while the model keeps generating in the background.
+            if not self._over_threshold_notified and self._placeholder is not None:
+                self._over_threshold_notified = True
+                try:
+                    await self._placeholder.edit_text(
+                        "✍️ <b>Jawaban panjang, masih menyusun…</b>\n"
+                        "<blockquote>Akan dikirim sebagai link begitu selesai.</blockquote>",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=None,
+                    )
+                except Exception:
+                    pass
             return
         self._last_edit = now
 
