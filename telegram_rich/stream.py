@@ -27,26 +27,18 @@ from telegram_rich.formatting import md_to_html
 # units. Once a streamed answer gets close to that, editing the message
 # keeps failing (or gets silently truncated) — instead of spamming
 # retries, the answer is cut off at _PASTE_THRESHOLD chars in-chat and the
-# full text is uploaded to the paste API below, linked underneath.
-_PASTE_THRESHOLD = 1500
-
-_PASTE_API_BASE = "https://paster-lyart.vercel.app/api/paste"
-_PASTE_TTL_MS = 24 * 60 * 60 * 1000  # 24h
+# full text is uploaded to paste.rs, linked underneath. Kept a bit under
+# 4096 to leave room for the "\n\nFull answer: <link>" note appended below.
+_PASTE_THRESHOLD = 3900
 
 
 async def _upload_to_pastebin(text: str) -> str | None:
-    """POST raw text to the paste API and return the full paste URL, or None on failure."""
+    """POST raw text to paste.rs and return the paste URL, or None on failure."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as http_client:
-            resp = await http_client.post(
-                _PASTE_API_BASE,
-                json={"text": text, "ttl": _PASTE_TTL_MS},
-            )
-        if resp.status_code in (200, 201):
-            data = resp.json()
-            paste_id = data.get("id")
-            if paste_id:
-                return f"{_PASTE_API_BASE}?id={paste_id}"
+            resp = await http_client.post("https://paste.rs/", content=text.encode("utf-8"))
+        if resp.status_code in (201, 206):
+            return resp.text.strip()
     except Exception:
         pass
     return None
