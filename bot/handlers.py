@@ -250,13 +250,85 @@ def _model_keyboard(provider: str, token: str) -> InlineKeyboardMarkup:
     rows = []
     for i in range(0, len(models), 2):
         row = []
-        for model in models[i : i + 2]:
+        for idx in range(i, min(i + 2, len(models))):
+            model = models[idx]
             # short_name = last path segment, e.g. "cf/@cf/meta/llama-3.2-1b-instruct" -> "llama-3.2-1b-instruct"
             short_name = model.rsplit("/", 1)[-1]
-            row.append(_button(f"✨ {short_name}", f"model:{model}:{token}", style="success", icon_custom_emoji_id=_icon("model")))
+            # callback_data references the model by its index within this
+            # provider's list (not the raw model string) — some model ids
+            # (e.g. long OpenRouter ":free" ids) push "model:<full-id>:<token>"
+            # past Telegram's 64-byte callback_data limit, which silently
+            # breaks the button. "provider/index" stays short no matter how
+            # long the model name is.
+            row.append(_button(f"✨ {short_name}", f"model:{provider}/{idx}:{token}", style="success", icon_custom_emoji_id=_icon("model")))
         rows.append(row)
     rows.append([_button("⬅️ Back to providers", f"back:{token}", style="danger", icon_custom_emoji_id=_icon("back"))])
     return InlineKeyboardMarkup(rows)
+
+
+# /model is paginated one provider per page (plus an overview page 0) so a
+# single message never risks Telegram's ~4096-character limit, no matter how
+# many providers/models get added to the catalog later.
+_MODEL_PAGE_KEYS: list[str] = list(MODEL_CATALOG.keys())  # index N-1 -> provider key for page N
+
+
+def _model_directory_page(page: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Build the (text, keyboard) for /model page `page`.
+    Page 0 = overview (auto-mode priority + provider index).
+    Page 1..len(providers) = that provider's full model list.
+    """
+    total_providers = len(_MODEL_PAGE_KEYS)
+    last_page = total_providers  # page 0 is the overview, so last real page == count of providers
+    page = max(0, min(page, last_page))
+
+    if page == 0:
+        total = sum(len(models) for models in MODEL_CATALOG.values())
+        lines = [
+            "🧩 <b>MODEL DIRECTORY</b>",
+            "",
+            f"📦 <b>{total}</b> models available across "
+            f"<b>{total_providers}</b> providers.",
+            "",
+            "🤖 <b>Auto mode priority</b>",
+        ]
+        for i, m in enumerate(MODEL_PRIORITY, start=1):
+            lines.append(f"  {i}. <code>{_esc(m)}</code>")
+        lines += ["", "📚 <b>Providers</b> <i>(tap Next to browse each one)</i>"]
+        for i, provider in enumerate(_MODEL_PAGE_KEYS, start=1):
+            label = PROVIDER_LABELS.get(provider, provider)
+            count = len(MODEL_CATALOG[provider])
+            lines.append(f"  {i}. <b>{_esc(label)}</b> — {count} models")
+        lines += [
+            "",
+            "<blockquote>🎛️ Use <code>/ai your prompt</code> to pick "
+            "a provider and model manually.</blockquote>",
+        ]
+    else:
+        provider = _MODEL_PAGE_KEYS[page - 1]
+        models = MODEL_CATALOG[provider]
+        label = PROVIDER_LABELS.get(provider, provider)
+        lines = [
+            f"🧩 <b>MODEL DIRECTORY</b> — page {page}/{last_page}",
+            "",
+            f"▸ <b>{_esc(label)}</b> ({len(models)} models)",
+        ]
+        for m in models:
+            lines.append(f"  • <code>{_esc(m)}</code>")
+        lines += [
+            "",
+            "<blockquote>🎛️ Use <code>/ai your prompt</code> to pick "
+            "a provider and model manually.</blockquote>",
+        ]
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(_button("⬅️ Prev", f"modelpage:{page - 1}", style="danger", icon_custom_emoji_id=_icon("back")))
+    if page < last_page:
+        nav_row.append(_button("Next ➡️", f"modelpage:{page + 1}", style="primary"))
+    rows = [nav_row] if nav_row else []
+    rows.append([_button("🧭 Pick provider &amp; model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))])
+
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
 async def _offer_provider_selection(message: Message, prompt: str) -> None:
@@ -329,35 +401,8 @@ def register_handlers(app: Client) -> None:
 
     @app.on_message(filters.command("model"))
     async def model_cmd(client: Client, message: Message):
-        total = sum(len(models) for models in MODEL_CATALOG.values())
-        lines = [
-            "🧩 <b>MODEL DIRECTORY</b>",
-            "",
-            f"📦 <b>{total}</b> models available across "
-            f"<b>{len(MODEL_CATALOG)}</b> providers.",
-            "",
-            "🤖 <b>Auto mode priority</b>",
-        ]
-        for i, m in enumerate(MODEL_PRIORITY, start=1):
-            lines.append(f"  {i}. <code>{_esc(m)}</code>")
-        lines += ["", "📚 <b>Providers &amp; models</b>"]
-        for provider, models in MODEL_CATALOG.items():
-            label = PROVIDER_LABELS.get(provider, provider)
-            lines.append(f"\n▸ <b>{_esc(label)}</b> ({len(models)} models)")
-            for m in models:
-                lines.append(f"  • <code>{_esc(m)}</code>")
-        lines += [
-            "",
-            "<blockquote>🎛️ Use <code>/ai your prompt</code> to pick "
-            "a provider and model manually.</blockquote>",
-        ]
-        await message.reply_text(
-            "\n".join(lines),
-            parse_mode=HTML,
-            reply_markup=InlineKeyboardMarkup(
-                [[_button("🧭 Pick provider &amp; model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))]]
-            ),
-        )
+        text, markup = _model_directory_page(0)
+        await message.reply_text(text, parse_mode=HTML, reply_markup=markup)
 
     def _is_admin(message: Message) -> bool:
         return bool(message.from_user and message.from_user.id in settings.admin_ids)
@@ -533,6 +578,22 @@ def register_handlers(app: Client) -> None:
                 parse_mode=HTML,
             )
 
+    @app.on_callback_query(filters.regex(r"^modelpage:"))
+    async def on_model_page(client: Client, callback_query: CallbackQuery):
+        """Prev/Next paging through /model's provider-by-provider directory."""
+        _, page_str = callback_query.data.split(":", 1)
+        try:
+            page = int(page_str)
+        except ValueError:
+            page = 0
+        await callback_query.answer()
+        text, markup = _model_directory_page(page)
+        try:
+            await callback_query.message.edit_text(text, parse_mode=HTML, reply_markup=markup)
+        except Exception:
+            # e.g. "message not modified" if the same page was tapped twice
+            pass
+
     @app.on_callback_query(filters.regex(r"^prov:"))
     async def on_provider_chosen(client: Client, callback_query: CallbackQuery):
         _, provider, token = callback_query.data.split(":", 2)
@@ -593,12 +654,27 @@ def register_handlers(app: Client) -> None:
 
     @app.on_callback_query(filters.regex(r"^model:"))
     async def on_model_chosen(client: Client, callback_query: CallbackQuery):
-        _, model, token = callback_query.data.split(":", 2)
+        _, provider_and_idx, token = callback_query.data.split(":", 2)
         pending = _pending.pop(token, None)
 
         if pending is None:
             await callback_query.answer(
                 "This request expired — please send /ai again.", show_alert=True
+            )
+            return
+
+        # provider_and_idx is "provider/index" (see _model_keyboard) — decode
+        # back to the real model string rather than trusting raw text from
+        # the button, and keep the lookup index-safe against a stale button
+        # (e.g. from before a bot restart with a different catalog).
+        provider, _, idx_str = provider_and_idx.rpartition("/")
+        provider_models = MODEL_CATALOG.get(provider, [])
+        try:
+            model = provider_models[int(idx_str)]
+        except (ValueError, IndexError):
+            await callback_query.answer(
+                "That model is no longer available — please send /ai again.",
+                show_alert=True,
             )
             return
 
@@ -608,7 +684,6 @@ def register_handlers(app: Client) -> None:
         except Exception:
             pass
 
-        provider = pending.get("provider") or ""
         candidates = provider_candidates(provider, model)
 
         await _run_generation(
