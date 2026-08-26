@@ -34,6 +34,14 @@ class Settings:
     ai_base_url: str = os.getenv("AI_BASE_URL", "https://9.todict.tech/v1")
     ai_api_key: str = os.getenv("AI_API_KEY", "")
     ai_timeout: float = _get_float("AI_TIMEOUT", 120.0)
+    # Hard ceiling on a single model's total streaming duration. httpx's
+    # per-request timeout only guards individual connect/read operations,
+    # so a provider that keeps trickling keep-alive bytes without ever
+    # finishing (or without erroring out) can otherwise hang forever —
+    # leaving the chat stuck on "masih menyusun..." indefinitely. This
+    # forces the stream to give up and move on / finish after N seconds
+    # total, regardless of per-chunk activity.
+    ai_stream_max_duration: float = _get_float("AI_STREAM_MAX_DURATION", 300.0)
 
     # --- Bot behavior ---
     max_history: int = _get_int("MAX_HISTORY", 12)  # messages remembered per chat

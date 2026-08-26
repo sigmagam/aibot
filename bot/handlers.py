@@ -227,6 +227,19 @@ async def _run_generation(
         await replier.fail(err_text)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error while processing message")
+        if replier.content or getattr(replier, "_reasoning", ""):
+            # We already streamed part (or all) of an answer before this
+            # error hit (e.g. a mid-stream drop or the total-duration
+            # timeout) — finish it off normally (which pastes to paste.rs
+            # if it's long) instead of throwing the partial answer away
+            # behind a generic error message.
+            try:
+                await replier.finish(model_used or "unknown")
+                _history[chat_id].append({"role": "user", "content": prompt})
+                _history[chat_id].append({"role": "assistant", "content": replier.content})
+                return
+            except Exception:
+                logger.exception("Failed to finish partial answer after error")
         await replier.fail(
             f"⚠️ <b>Unexpected error</b>\n<blockquote><code>{_esc(str(exc))}</code></blockquote>"
         )

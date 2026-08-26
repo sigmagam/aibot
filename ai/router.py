@@ -17,8 +17,10 @@ Returns an async generator of StreamChunk so it can be used to stream
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
@@ -82,6 +84,7 @@ class AIRouter:
         for model in candidates or default_candidates():
             attempts.append(model)
             got_any_chunk = False
+            deadline = time.monotonic() + settings.ai_stream_max_duration
             try:
                 async with httpx.AsyncClient(timeout=settings.ai_timeout) as client:
                     payload = {
@@ -101,7 +104,26 @@ class AIRouter:
                                 f"HTTP {resp.status_code}: {body[:300]!r}"
                             )
 
-                        async for line in resp.aiter_lines():
+                        line_iter = resp.aiter_lines()
+                        while True:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError(
+                                    f"stream exceeded {settings.ai_stream_max_duration:.0f}s "
+                                    "total duration"
+                                )
+                            try:
+                                line = await asyncio.wait_for(
+                                    line_iter.__anext__(), timeout=remaining
+                                )
+                            except StopAsyncIteration:
+                                break
+                            except asyncio.TimeoutError:
+                                raise TimeoutError(
+                                    f"stream exceeded {settings.ai_stream_max_duration:.0f}s "
+                                    "total duration"
+                                ) from None
+
                             if not line or not line.startswith("data:"):
                                 continue
                             data_str = line[len("data:"):].strip()
@@ -140,7 +162,11 @@ class AIRouter:
                 last_error = exc
                 if got_any_chunk:
                     # Already streamed part of an answer to the caller,
-                    # don't silently swap models mid-stream.
+                    # don't silently swap models mid-stream. This also
+                    # covers the total-duration timeout above: whatever
+                    # was received so far still gets finished off and
+                    # sent (as a paste.rs link if it's long) instead of
+                    # vanishing.
                     raise
                 continue
 
