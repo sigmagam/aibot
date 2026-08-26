@@ -66,7 +66,7 @@ from database import (
     remove_user,
     upsert_user,
 )
-from bot.mentions import extract_prompt
+from bot.mentions import extract_prompt, should_respond
 from telegram_rich.stream import StreamingReplier
 
 logger = logging.getLogger("bot.handlers")
@@ -75,6 +75,13 @@ logger = logging.getLogger("bot.handlers")
 _COMMANDS = [
     "start", "help", "reset", "model", "stats", "broadcast", "gitpull", "ai"
 ]
+
+# Matches "/cmd@SomeBotUsername ..." so we can tell a command meant for a
+# *different* bot apart from plain chat text — filters.command() only
+# matches this bot's own username (or no username), so without this check
+# "/start@OtherBot" in a group would fall through to on_text and get sent
+# to the AI as if it were a normal prompt.
+_COMMAND_FOR_OTHER_BOT_RE = re.compile(r"^/\w+@(\w+)", re.IGNORECASE)
 
 HTML = ParseMode.HTML
 
@@ -491,6 +498,18 @@ def register_handlers(app: Client) -> None:
     async def on_text(client: Client, message: Message):
         me = client.me  # cached bot identity (username etc.), set by Kurigram at startup
         bot_username = me.username if me else ""
+
+        text = message.text or ""
+        other_bot_match = _COMMAND_FOR_OTHER_BOT_RE.match(text)
+        if other_bot_match and other_bot_match.group(1).lower() != bot_username.lower():
+            # e.g. "/start@SomeOtherBot" in a group chat with several bots —
+            # not addressed to us, so don't treat it as a prompt.
+            return
+
+        if not should_respond(message, bot_username):
+            # In groups: only mentions/replies-to-us trigger a response, so
+            # the bot doesn't answer every message everyone else sends.
+            return
 
         prompt = extract_prompt(message, bot_username)
         if not prompt:
