@@ -24,22 +24,29 @@ from config import settings
 from telegram_rich.formatting import md_to_html
 
 # Telegram's hard limit on a single message's text is 4096 UTF-16 code
-# units. Once a streamed answer's rendered HTML gets close to that, editing
-# the message keeps failing (or gets silently truncated) — instead of
-# spamming retries, the full answer is uploaded to https://paste.rs and the
-# chat only gets a short note + link. Kept comfortably under 4096 to leave
-# room for the "too long, full answer:" note appended below it.
-_TELEGRAM_MAX_LEN = 4096
-_PASTE_THRESHOLD = 3500
+# units. Once a streamed answer gets close to that, editing the message
+# keeps failing (or gets silently truncated) — instead of spamming
+# retries, the answer is cut off at _PASTE_THRESHOLD chars in-chat and the
+# full text is uploaded to the paste API below, linked underneath.
+_PASTE_THRESHOLD = 1500
+
+_PASTE_API_BASE = "https://paster-lyart.vercel.app/api/paste"
+_PASTE_TTL_MS = 24 * 60 * 60 * 1000  # 24h
 
 
 async def _upload_to_pastebin(text: str) -> str | None:
-    """POST raw text to paste.rs and return the paste URL, or None on failure."""
+    """POST raw text to the paste API and return the full paste URL, or None on failure."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as http_client:
-            resp = await http_client.post("https://paste.rs/", content=text.encode("utf-8"))
-        if resp.status_code in (201, 206):
-            return resp.text.strip()
+            resp = await http_client.post(
+                _PASTE_API_BASE,
+                json={"text": text, "ttl": _PASTE_TTL_MS},
+            )
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            paste_id = data.get("id")
+            if paste_id:
+                return f"{_PASTE_API_BASE}?id={paste_id}"
     except Exception:
         pass
     return None
@@ -106,24 +113,13 @@ class StreamingReplier:
             return
 
         html_text = self._render()
-        if len(html_text) > _PASTE_THRESHOLD:
-            # Already too long for a single Telegram message — stop editing
-            # it every tick (those edits would just keep failing / getting
-            # truncated). finish() will swap this to a paste.rs link once
-            # the stream ends. Tell the user once so it doesn't just look
-            # frozen while the model keeps generating in the background.
-            if not self._over_threshold_notified and self._placeholder is not None:
-                self._over_threshold_notified = True
-                try:
-                    await self._placeholder.edit_text(
-                        "✍️ <b>Jawaban panjang, masih menyusun…</b>\n"
-                        "<blockquote>Akan dikirim sebagai link begitu selesai.</blockquote>",
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=None,
-                    )
-                except Exception:
-                    pass
-            return
+        truncated = len(html_text) > _PASTE_THRESHOLD
+        if truncated:
+            # Keep showing the answer as it grows, just capped at the
+            # threshold so edits don't keep failing/getting truncated by
+            # Telegram while the model is still generating. finish() swaps
+            # this for the real answer + paste link once the stream ends.
+            html_text = html_text[:_PASTE_THRESHOLD] + "…"
         self._last_edit = now
 
         if self._placeholder is None:
@@ -145,23 +141,24 @@ class StreamingReplier:
     async def finish(self, model_used: str) -> None:
         html_text = self._render()
 
-        if len(html_text) > _TELEGRAM_MAX_LEN:
-            # Too long to fit in one Telegram message. Upload the raw
-            # (un-rendered) answer to paste.rs and point the chat at the
-            # link instead of fighting Telegram's length limit or
+        if len(html_text) > _PASTE_THRESHOLD:
+            # Too long — show the first _PASTE_THRESHOLD chars in-chat and
+            # upload the full raw answer to the paste API, with the link
+            # underneath instead of fighting Telegram's length limit or
             # splitting into multiple messages.
             paste_url = await _upload_to_pastebin(self._content or "(no answer)")
+            preview = html_text[:_PASTE_THRESHOLD] + "…"
             if paste_url:
                 note = (
-                    "📄 <b>Answer too long for Telegram</b>\n"
-                    f"<blockquote>Full response: {paste_url}</blockquote>"
+                    f"{preview}\n\n"
+                    f"📄 <b>Jawaban lengkap:</b> {paste_url}"
                 )
             else:
-                # paste.rs itself failed — fall back to a hard-truncated
+                # Paste API itself failed — fall back to a hard-truncated
                 # in-chat message rather than losing the answer entirely.
-                note = md_to_html(self._content[: _TELEGRAM_MAX_LEN - 200]) + (
-                    "\n\n<blockquote>⚠️ Answer truncated — too long for "
-                    "Telegram and the pastebin upload failed.</blockquote>"
+                note = preview + (
+                    "\n\n<blockquote>⚠️ Jawaban dipotong — gagal upload "
+                    "ke pastebin.</blockquote>"
                 )
             if self._placeholder is not None:
                 try:
