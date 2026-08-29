@@ -21,12 +21,21 @@ _orig_send_message = Client.send_message
 async def _patched_reply_text(self, text, *args, parse_mode=None, **kwargs):
     if parse_mode == ParseMode.HTML:
         text = wrap_custom_emoji(text)
+    # Telegram Business messages must be answered through the same
+    # business connection that delivered the message. Kurigram exposes
+    # this ID on Message.business_connection_id.
+    business_connection_id = getattr(self, "business_connection_id", None)
+    if business_connection_id and "business_connection_id" not in kwargs:
+        kwargs["business_connection_id"] = business_connection_id
     return await _orig_reply_text(self, text, *args, parse_mode=parse_mode, **kwargs)
 
 
 async def _patched_edit_text(self, text, *args, parse_mode=None, **kwargs):
     if parse_mode == ParseMode.HTML:
         text = wrap_custom_emoji(text)
+    business_connection_id = getattr(self, "business_connection_id", None)
+    if business_connection_id and "business_connection_id" not in kwargs:
+        kwargs["business_connection_id"] = business_connection_id
     return await _orig_edit_text(self, text, *args, parse_mode=parse_mode, **kwargs)
 
 

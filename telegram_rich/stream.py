@@ -55,6 +55,9 @@ class StreamingReplier:
         self._client = client
         self._trigger_message = trigger_message
         self._chat_id = trigger_message.chat.id
+        # Business chats require all outbound operations to carry the
+        # connection ID received with the inbound business message.
+        self._business_connection_id = getattr(trigger_message, "business_connection_id", None)
         self._placeholder = placeholder
         self._show_reasoning = show_reasoning
         self._reasoning = ""
@@ -68,7 +71,12 @@ class StreamingReplier:
 
     async def start(self) -> None:
         try:
-            await self._client.send_chat_action(self._chat_id, ChatAction.TYPING)
+            await self._client.send_chat_action(
+                self._chat_id,
+                ChatAction.TYPING,
+                **({"business_connection_id": self._business_connection_id}
+                   if self._business_connection_id else {}),
+            )
         except Exception:
             pass
 
@@ -81,7 +89,12 @@ class StreamingReplier:
         # indicator alive while we wait for the first content token.
         if not self._content:
             try:
-                await self._client.send_chat_action(self._chat_id, ChatAction.TYPING)
+                await self._client.send_chat_action(
+                    self._chat_id,
+                    ChatAction.TYPING,
+                    **({"business_connection_id": self._business_connection_id}
+                       if self._business_connection_id else {}),
+                )
             except Exception:
                 pass
 
