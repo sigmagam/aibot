@@ -564,10 +564,10 @@ def register_handlers(app: Client) -> None:
 
     # Telegram Business / connected-account messages are delivered as
     # normal Message objects with `business_connection_id` set.
-    # `filters.tg_business` is the Kurigram filter for these updates.
+    # `filters.business` is the Kurigram filter for these updates.
     # Register this BEFORE the normal text handler so Business DMs are
     # explicitly routed through the AI pipeline.
-    @app.on_message(filters.tg_business & filters.text & ~filters.command(_COMMANDS))
+    @app.on_message(filters.business & filters.text & ~filters.command(_COMMANDS))
     async def on_business_text(client: Client, message: Message):
         connection_id = getattr(message, "business_connection_id", None)
         if not connection_id:
@@ -596,7 +596,7 @@ def register_handlers(app: Client) -> None:
             candidates=default_candidates(),
         )
 
-    @app.on_message(filters.text & ~filters.tg_business & ~filters.command(_COMMANDS))
+    @app.on_message(filters.text & ~filters.business & ~filters.command(_COMMANDS))
     async def on_text(client: Client, message: Message):
         me = client.me  # cached bot identity (username etc.), set by Kurigram at startup
         bot_username = me.username if me else ""
