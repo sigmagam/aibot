@@ -250,32 +250,23 @@ async def _send_thinking_placeholder(client: Client, message: Message) -> Messag
     """Send an instant reply so plain-text prompts feel as responsive as
     /ai (whose button grid appears immediately).
 
-    Uses Kurigram's native Rich Message "thinking" block (Bot API 10.1,
-    `<tg-thinking>` — see RichBlockThinking in pyrogram/types) via
-    send_rich_message_draft, per Kurigram's docs:
-    https://docs.kurigram.icu/api/types/RichBlockThinking/
-
-    IMPORTANT: a rich-message *draft* is explicitly ephemeral — Telegram
-    only keeps it displayed for ~30 seconds as a preview, and it is never
-    actually saved as a real message (no message_id, can't be edited
-    later). It exists purely to animate a streaming AI reply while you
-    keep re-sending drafts, then finalize with send_rich_message once.
-    That doesn't fit here: our _run_generation flow may take anywhere
-    from a second to several minutes (model timeouts/fallbacks) and needs
-    a real Message it can keep editing (`edit_text`) the whole time — a
-    draft would just vanish after 30s if the model's still thinking.
-    So the actual "thinking" indicator sent here is a REAL message
-    (send_rich_message, not the draft variant) built from the same
-    <tg-thinking> block, which Telegram renders identically but persists
-    and can be edited/replaced normally like any other message.
+    Tried using Kurigram's native Rich Message "thinking" block
+    (RichBlockThinking / `<tg-thinking>`, Bot API 10.1) here first, but
+    Telegram's server rejects it outright with 400
+    RICH_MESSAGE_BLOCK_UNSUPPORTED when sent via send_rich_message.
+    Per Kurigram's own docs that block is only valid inside
+    send_rich_message_draft, which is an ephemeral ~30s preview with no
+    real message_id — it can't be persisted or edit_text'd later, so it
+    can't serve as our long-lived streaming placeholder (a model can take
+    anywhere from 1s to several minutes with fallbacks). So this uses a
+    real message with a native Telegram expandable blockquote instead,
+    which IS a normal persisted message we can keep editing.
     """
     try:
-        return await client.send_rich_message(
-            message.chat.id,
-            rich_message=types.InputRichMessage(
-                html="<tg-thinking>🧠 Thinking…</tg-thinking>"
-            ),
-            reply_parameters=types.ReplyParameters(message_id=message.id),
+        return await message.reply_text(
+            "<blockquote expandable>🧠 Thinking…</blockquote>",
+            quote=True,
+            parse_mode=HTML,
         )
     except Exception:
         logger.exception("Failed to send thinking placeholder")
