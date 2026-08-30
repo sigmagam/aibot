@@ -44,7 +44,6 @@ from pyrogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from pyrogram import types
 
 try:
     from pyrogram.enums import ButtonStyle
@@ -244,33 +243,6 @@ async def _run_generation(
         await replier.fail(
             f"⚠️ <b>Unexpected error</b>\n<blockquote><code>{_esc(str(exc))}</code></blockquote>"
         )
-
-
-async def _send_thinking_placeholder(client: Client, message: Message) -> Message | None:
-    """Send an instant reply so plain-text prompts feel as responsive as
-    /ai (whose button grid appears immediately).
-
-    Tried using Kurigram's native Rich Message "thinking" block
-    (RichBlockThinking / `<tg-thinking>`, Bot API 10.1) here first, but
-    Telegram's server rejects it outright with 400
-    RICH_MESSAGE_BLOCK_UNSUPPORTED when sent via send_rich_message.
-    Per Kurigram's own docs that block is only valid inside
-    send_rich_message_draft, which is an ephemeral ~30s preview with no
-    real message_id — it can't be persisted or edit_text'd later, so it
-    can't serve as our long-lived streaming placeholder (a model can take
-    anywhere from 1s to several minutes with fallbacks). So this uses a
-    real message with a native Telegram expandable blockquote instead,
-    which IS a normal persisted message we can keep editing.
-    """
-    try:
-        return await message.reply_text(
-            "<blockquote expandable>🧠 Thinking…</blockquote>",
-            quote=True,
-            parse_mode=HTML,
-        )
-    except Exception:
-        logger.exception("Failed to send thinking placeholder")
-        return None
 
 
 def _provider_keyboard(token: str) -> InlineKeyboardMarkup:
@@ -617,13 +589,11 @@ def register_handlers(app: Client) -> None:
             message.chat.id,
             connection_id,
         )
-        placeholder = await _send_thinking_placeholder(client, message)
         await _run_generation(
             client,
             message,
             prompt,
             candidates=default_candidates(),
-            placeholder=placeholder,
         )
 
     @app.on_message(filters.text & ~filters.business & ~filters.command(_COMMANDS))
@@ -647,17 +617,8 @@ def register_handlers(app: Client) -> None:
         if not prompt:
             return
 
-        # Plain message: no button. Send an instant "thinking..." reply
-        # first so the user always sees *something* right away — without
-        # this, if the first candidate model is slow or failing, the chat
-        # looked completely dead for up to a couple of minutes before any
-        # reply (or error) showed up, which is what made people think
-        # auto-reply "sometimes doesn't work" and fall back to /ai (whose
-        # button grid appears instantly instead).
-        placeholder = await _send_thinking_placeholder(client, message)
-        await _run_generation(
-            client, message, prompt, candidates=default_candidates(), placeholder=placeholder
-        )
+        # Plain message: no button, run immediately with the default order.
+        await _run_generation(client, message, prompt, candidates=default_candidates())
 
     @app.on_callback_query(filters.regex(r"^menu:"))
     async def on_menu_shortcut(client: Client, callback_query: CallbackQuery):
