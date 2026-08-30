@@ -37,7 +37,6 @@ THINKING_MODELS: set[str] = {
 PROVIDER_LABELS: dict[str, str] = {
     "antigravity": "Antigravity",
     "nvidia": "NVIDIA NIM",
-    "groq": "Groq",
     "gemini": "Gemini",
     "gemini_cli": "Gemini CLI",
     "opencode_free": "OpenCode Free",
@@ -78,12 +77,6 @@ MODEL_CATALOG: dict[str, list[str]] = {
         "nvidia/moonshotai/kimi-k3",
         "nvidia/minimaxai/minimax-m3",
         "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
-    ],
-    "groq": [
-        "groq/llama-3.3-70b-versatile",
-        "groq/meta-llama/llama-4-maverick-17b-128e-instruct",
-        "groq/qwen/qwen3-32b",
-        "groq/openai/gpt-oss-120b",
     ],
     "gemini": [
         "gemini/gemini-3.7-flash",

@@ -245,6 +245,22 @@ async def _run_generation(
         )
 
 
+async def _send_thinking_placeholder(message: Message) -> Message | None:
+    """Send an instant "🤔 thinking..." reply so plain-text prompts feel as
+    responsive as /ai (which shows its provider buttons immediately).
+    Returns the sent message to use as the streaming placeholder, or None
+    if sending it failed for some reason (rate limit, etc.) — in that case
+    _run_generation just falls back to sending a fresh reply once the
+    first chunk arrives, same as before."""
+    try:
+        return await message.reply_text(
+            "🤔 <i>Sedang berpikir...</i>", quote=True, parse_mode=HTML
+        )
+    except Exception:
+        logger.exception("Failed to send thinking placeholder")
+        return None
+
+
 def _provider_keyboard(token: str) -> InlineKeyboardMarkup:
     providers = list(MODEL_CATALOG.keys())
     rows = []
@@ -589,11 +605,13 @@ def register_handlers(app: Client) -> None:
             message.chat.id,
             connection_id,
         )
+        placeholder = await _send_thinking_placeholder(message)
         await _run_generation(
             client,
             message,
             prompt,
             candidates=default_candidates(),
+            placeholder=placeholder,
         )
 
     @app.on_message(filters.text & ~filters.business & ~filters.command(_COMMANDS))
@@ -617,8 +635,17 @@ def register_handlers(app: Client) -> None:
         if not prompt:
             return
 
-        # Plain message: no button, run immediately with the default order.
-        await _run_generation(client, message, prompt, candidates=default_candidates())
+        # Plain message: no button. Send an instant "thinking..." reply
+        # first so the user always sees *something* right away — without
+        # this, if the first candidate model is slow or failing, the chat
+        # looked completely dead for up to a couple of minutes before any
+        # reply (or error) showed up, which is what made people think
+        # auto-reply "sometimes doesn't work" and fall back to /ai (whose
+        # button grid appears instantly instead).
+        placeholder = await _send_thinking_placeholder(message)
+        await _run_generation(
+            client, message, prompt, candidates=default_candidates(), placeholder=placeholder
+        )
 
     @app.on_callback_query(filters.regex(r"^menu:"))
     async def on_menu_shortcut(client: Client, callback_query: CallbackQuery):

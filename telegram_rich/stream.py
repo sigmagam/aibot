@@ -184,11 +184,14 @@ class StreamingReplier:
             )
 
     async def fail(self, error_text: str) -> None:
-        text = f"⚠️ {error_text}"
+        # error_text already comes pre-formatted with HTML tags and its own
+        # ⚠️ prefix from handlers.py — sending it with parse_mode=None (as
+        # before) showed the raw <b>/<blockquote> tags to the user instead
+        # of rendering them, and doubled the warning emoji.
         if self._placeholder is not None:
             try:
-                await self._placeholder.edit_text(text, parse_mode=None, reply_markup=None)
+                await self._placeholder.edit_text(error_text, parse_mode=ParseMode.HTML, reply_markup=None)
                 return
             except Exception:
                 pass
-        await self._trigger_message.reply_text(text, quote=True, parse_mode=None)
+        await self._trigger_message.reply_text(error_text, quote=True, parse_mode=ParseMode.HTML)
