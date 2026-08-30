@@ -44,6 +44,7 @@ from pyrogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from pyrogram import types
 
 try:
     from pyrogram.enums import ButtonStyle
@@ -245,16 +246,36 @@ async def _run_generation(
         )
 
 
-async def _send_thinking_placeholder(message: Message) -> Message | None:
-    """Send an instant "🤔 thinking..." reply so plain-text prompts feel as
-    responsive as /ai (which shows its provider buttons immediately).
-    Returns the sent message to use as the streaming placeholder, or None
-    if sending it failed for some reason (rate limit, etc.) — in that case
-    _run_generation just falls back to sending a fresh reply once the
-    first chunk arrives, same as before."""
+async def _send_thinking_placeholder(client: Client, message: Message) -> Message | None:
+    """Send an instant reply so plain-text prompts feel as responsive as
+    /ai (whose button grid appears immediately).
+
+    Uses Kurigram's native Rich Message "thinking" block (Bot API 10.1,
+    `<tg-thinking>` — see RichBlockThinking in pyrogram/types) via
+    send_rich_message_draft, per Kurigram's docs:
+    https://docs.kurigram.icu/api/types/RichBlockThinking/
+
+    IMPORTANT: a rich-message *draft* is explicitly ephemeral — Telegram
+    only keeps it displayed for ~30 seconds as a preview, and it is never
+    actually saved as a real message (no message_id, can't be edited
+    later). It exists purely to animate a streaming AI reply while you
+    keep re-sending drafts, then finalize with send_rich_message once.
+    That doesn't fit here: our _run_generation flow may take anywhere
+    from a second to several minutes (model timeouts/fallbacks) and needs
+    a real Message it can keep editing (`edit_text`) the whole time — a
+    draft would just vanish after 30s if the model's still thinking.
+    So the actual "thinking" indicator sent here is a REAL message
+    (send_rich_message, not the draft variant) built from the same
+    <tg-thinking> block, which Telegram renders identically but persists
+    and can be edited/replaced normally like any other message.
+    """
     try:
-        return await message.reply_text(
-            "🤔 <i>Sedang berpikir...</i>", quote=True, parse_mode=HTML
+        return await client.send_rich_message(
+            message.chat.id,
+            rich_message=types.InputRichMessage(
+                html="<tg-thinking>🧠 Thinking…</tg-thinking>"
+            ),
+            reply_parameters=types.ReplyParameters(message_id=message.id),
         )
     except Exception:
         logger.exception("Failed to send thinking placeholder")
@@ -605,7 +626,7 @@ def register_handlers(app: Client) -> None:
             message.chat.id,
             connection_id,
         )
-        placeholder = await _send_thinking_placeholder(message)
+        placeholder = await _send_thinking_placeholder(client, message)
         await _run_generation(
             client,
             message,
@@ -642,7 +663,7 @@ def register_handlers(app: Client) -> None:
         # reply (or error) showed up, which is what made people think
         # auto-reply "sometimes doesn't work" and fall back to /ai (whose
         # button grid appears instantly instead).
-        placeholder = await _send_thinking_placeholder(message)
+        placeholder = await _send_thinking_placeholder(client, message)
         await _run_generation(
             client, message, prompt, candidates=default_candidates(), placeholder=placeholder
         )
