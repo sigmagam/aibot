@@ -76,8 +76,6 @@ MODEL_CATALOG: dict[str, list[str]] = {
         "nvidia/moonshotai/kimi-k2.6",
         "nvidia/moonshotai/kimi-k3",
         "nvidia/minimaxai/minimax-m3",
-        "nvidia/poolside/laguna-xs-2.1",
-        "nvidia/meta/muse-glimmer-30b",
         "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
     ],
     "gemini": [
