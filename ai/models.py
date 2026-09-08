@@ -46,6 +46,7 @@ PROVIDER_LABELS: dict[str, str] = {
     "openrouter": "OpenRouter",
     "poolside": "Poolside",
     "siliconflow": "SiliconFlow",
+    "kilo": " KiloAi"
 }
 
 # Full per-provider catalog (mirrors the dashboard screenshot).
@@ -119,6 +120,11 @@ MODEL_CATALOG: dict[str, list[str]] = {
         "gcli/grok-4.5-medium",
         "gcli/grok-4.5-low",
     ],
+    "kilo": [
+        "kc/inclusionai/ling-3.0-flash-sante:free",
+        "kc/dots-studio/dots-3-note-preview:free",
+        "kc/kilo-auto/free",
+    ],
     "cloudflare": [
         "cf/@cf/meta/llama-3.2-1b-instruct",
         "cf/@cf/meta/llama-3.2-3b-instruct",
@@ -153,6 +159,7 @@ MODEL_CATALOG: dict[str, list[str]] = {
         "openrouter/dots-studio/dots-3-note-preview:free",
         "openrouter/minimax/minimax-m3:free",
         "openrouter/cohere/north-mini-code:free",
+        "openrouter/inclusionai/ling-3.0-flash-fin:free",
         "openrouter/google/lyria-3-clip-preview",
         "openrouter/nvidia/nemotron-3.5-lightning:free",
         "openrouter/google/gemma-4-31b-it:free",
