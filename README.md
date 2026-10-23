@@ -4,6 +4,19 @@ A Telegram bot built with [Kurigram](https://github.com/KurimuzonAkuma/kurigram)
 that forwards questions to the AI router at `https://9.todict.tech/v1`
 (OpenAI-compatible `/chat/completions` endpoint, SSE streaming).
 
+## Locked to admins
+
+`ADMIN_ONLY=true` (default) makes the bot answer **only** the Telegram user
+IDs in `ADMIN_IDS`. Everything from anyone else is dropped before any
+handler runs — `/start`, `/help`, `/ai`, `/sh`, buttons, plain messages and
+business messages alike. Non-admins get no reply at all, so a stranger
+cannot even tell the bot is online (the attempt is only written to the
+bot log).
+
+The gate is a `group=-1` handler (`bot/handlers.py -> admin_gate`) that
+raises `StopPropagation`, so it also covers commands added later — nothing
+can slip past it. Set `ADMIN_ONLY=false` to open the bot up again.
+
 ## Project structure
 
 ```
@@ -133,9 +146,9 @@ Settings (`.env`):
 | `SHELL_TIMEOUT` | `60` | per command timeout |
 | `SHELL_WORKDIR` | `/root` | working directory for commands |
 
-> Agent mode is a root shell with extra steps: keep `ADMIN_IDS` private,
-> and leave `AGENT_ADMIN_ONLY=true` if anyone else can DM the bot.
-> `/ai` and non-admin messages stay read-only chat.
+> Agent mode is a root shell with extra steps: keep `ADMIN_IDS` private.
+> `AGENT_ADMIN_ONLY` is a second lock on top of `ADMIN_ONLY` (plain messages
+> in agent mode are the only place tool use can happen).
 
 `/sh <command>` is still there for when you want to run one exact command
 yourself — same shell, same timeout, no model in the middle.
@@ -177,7 +190,10 @@ Lost on process restart. Use `/reset` to clear it manually.
 Users are registered in a local SQLite database when they use `/start`.
 The database file defaults to `data/bot.db` and is intentionally local.
 
-Set `ADMIN_IDS` to the numeric Telegram user ID(s) of trusted administrators.
+Set `ADMIN_IDS` to the numeric Telegram user ID(s) of trusted
+administrators. With `ADMIN_ONLY=true` (the default) they are also the only
+accounts the bot reacts to at all — see "Locked to admins" above.
+
 Admins get:
 
 - Plain messages also get agent mode (tool use) for admins — see above.

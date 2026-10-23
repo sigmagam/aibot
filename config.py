@@ -66,6 +66,9 @@ class Settings:
     start_effect_id: str = os.getenv("START_EFFECT_ID", "5159385139981059251")
 
     # --- SQLite / admin ---
+    # With ADMIN_ONLY=true (default) only ADMIN_IDS can talk to the bot at
+    # all — everyone else is silently ignored, /start included.
+    admin_only: bool = os.getenv("ADMIN_ONLY", "true").lower() == "true"
     database_path: str = os.getenv("DATABASE_PATH", "data/bot.db")
     admin_ids: tuple[int, ...] = tuple(
         int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",")

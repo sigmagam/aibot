@@ -36,7 +36,7 @@ import os
 import subprocess
 import sys
 
-from pyrogram import Client, filters
+from pyrogram import Client, StopPropagation, filters
 from pyrogram.enums import ChatType, ParseMode
 from pyrogram.types import (
     CallbackQuery,
@@ -429,6 +429,40 @@ async def _offer_provider_selection(message: Message, prompt: str) -> None:
 def register_handlers(app: Client) -> None:
     init_db()
 
+    # --- Admin gate (group=-1 runs before everything else) -----------------
+    # With ADMIN_ONLY=true (default) only ADMIN_IDS get any reaction at all:
+    # /start, /ai, /sh, plain prompts, buttons, business messages — from
+    # anyone else the update is dropped here and never reaches another
+    # handler. Non-admins get no reply at all, so the bot is simply dead to
+    # them (a stranger cannot even tell it is online).
+    @app.on_message(filters.all, group=-1)
+    async def admin_gate(client: Client, message: Message):
+        if not settings.admin_only:
+            return
+        user = message.from_user
+        if user is not None and user.id in settings.admin_ids:
+            return
+        logger.warning(
+            "Dropped message from non-admin: user_id=%s chat_id=%s text=%r",
+            getattr(user, "id", None),
+            message.chat.id,
+            (message.text or message.caption or "")[:80],
+        )
+        raise StopPropagation
+
+    @app.on_callback_query(filters.all, group=-1)
+    async def admin_gate_callback(client: Client, callback_query: CallbackQuery):
+        if not settings.admin_only:
+            return
+        user = callback_query.from_user
+        if user is not None and user.id in settings.admin_ids:
+            return
+        try:
+            await callback_query.answer("Not authorized.", show_alert=True)
+        except Exception:  # noqa: BLE001 - button may already be gone
+            pass
+        raise StopPropagation
+
     @app.on_message(filters.command("start"))
     async def start_cmd(client: Client, message: Message):
         upsert_user(message)
@@ -460,7 +494,8 @@ def register_handlers(app: Client) -> None:
             "you want for a better result.</i>\n\n"
             "🧩 <b>Example</b>\n"
             "<pre>/ai Explain quantum computing simply</pre>\n\n"
-            "🚀 <b>Ready when you are.</b>",
+            "🚀 <b>Ready when you are.</b>\n\n"
+            "🔒 <i>Admin-only: messages from other users are ignored.</i>",
             parse_mode=HTML,
             reply_markup=InlineKeyboardMarkup(
                 [
