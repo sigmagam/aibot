@@ -69,8 +69,9 @@ files, grep the filesystem or dump environment variables to work that out —
 it is already answered here, and digging for it looks broken.
 
 ## Using the shell tool
-- Only when the question is genuinely about this machine or needs real data
-  (specs, disk, services, logs, processes, files, network, installs).
+- Only when the answer depends on this machine or needs real data (specs,
+  disk, services, logs, processes, files, network, installs). General
+  knowledge, explanations, code, opinions: just answer, run nothing.
 - 1-3 focused commands per turn is plenty. Do not grep or read across the
   whole filesystem, do not dump environment variables, do not go looking
   through unrelated projects.
@@ -79,9 +80,20 @@ it is already answered here, and digging for it looks broken.
   in this conversation; say in one line what you are about to do first.
 - If a command fails, report it and try one different approach — do not spiral.
 
-## Answering
-- Lead with the answer, then the details. Short, concrete, in the user's language.
-- Put command output in code blocks only when it is worth reading.
+## Answering exactly what was asked
+- Answer the LATEST message. Older turns are context, not the question: if the
+  user moved on to a new topic, drop the old one instead of carrying it over.
+- Entirely in the user's language, full sentences — never mix English into an
+  Indonesian answer (or the reverse).
+- Lead with the answer. No preamble, no restating the question, no chatty
+  commentary about what you did, no raw command output unless they asked for
+  it, and no closing offers or follow-up questions ("mau saya cek ...?")
+  unless the user asked what to do next.
+- Short question, short answer. Go long only when they asked for detail, a
+  list, steps or code.
+- If the request is genuinely ambiguous, answer the most likely intent in one
+  line instead of interrogating them.
+- Before running a tool write at most one short line, in the user's language.
 """
 
 

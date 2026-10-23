@@ -152,6 +152,17 @@ the brief explicitly forbids probing the filesystem/env to figure that out.
 The same brief keeps tool use on topic: 1-3 focused commands, no grepping
 the whole filesystem, no env dumps, no secrets printed.
 
+**Answering contract** (in both modes, `config.py -> system_prompt` +
+`ai/agent.py`): answer exactly what was asked and nothing more — same
+language as the user (no mixed English), lead with the answer, as short as
+the question deserves, no preamble, no repeating the question back, no raw
+command dumps unless asked, and no unsolicited tips/warnings or closing
+offers ("mau saya cek ...?"). Earlier turns are context only: a new topic
+is answered on its own, so one long-lived session cannot smear one question
+into the next answer. The shell tool is reserved for things that depend on
+this machine — general knowledge, explanations and code get answered with
+no commands at all.
+
 Implementation:
 
 | Piece | Where |

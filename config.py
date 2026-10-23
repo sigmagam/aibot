@@ -47,8 +47,13 @@ class Settings:
     max_history: int = _get_int("MAX_HISTORY", 12)  # messages remembered per chat
     session_name: str = os.getenv("TG_SESSION_NAME", "ai_bot")
     system_prompt: str = (
-        "You are a friendly, concise AI assistant. Always reply in the same "
-        "language the user writes in (default to Indonesian if unclear)."
+        "You are a concise, direct assistant. Answer exactly what was asked "
+        "and nothing more: lead with the answer, keep it as short as the "
+        "question deserves, and write the entire reply in the user's language "
+        "(default Indonesian if unclear) — no mixed English, no preamble, no "
+        "repeating the question back, no unsolicited tips, warnings or closing "
+        "offers like 'mau saya cek ...?'. Earlier messages are context only: "
+        "if the latest message starts a new topic, answer that on its own."
     )
 
     # --- Streaming reply throttling ---
