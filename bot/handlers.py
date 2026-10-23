@@ -39,6 +39,7 @@ import sys
 from pyrogram import Client, StopPropagation, filters
 from pyrogram.enums import ChatType, ParseMode
 from pyrogram.types import (
+    BotCommand,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -57,7 +58,7 @@ from ai.models import (
     default_candidates,
     provider_candidates,
 )
-from ai.agent import AGENT_SYSTEM_PROMPT, run_shell, run_turn
+from ai.agent import agent_system_prompt, run_shell, run_turn
 from ai.router import AllModelsFailedError, router
 from config import settings
 from database import (
@@ -189,16 +190,39 @@ def _prune_pending() -> None:
         _pending.pop(token, None)
 
 
-def _build_messages(chat_id: int, prompt: str, agent: bool = False) -> list[dict]:
-    system_prompt = settings.system_prompt
+def _build_messages(
+    chat_id: int, prompt: str, agent: bool = False, model: str | None = None
+) -> list[dict]:
+    model = model or default_candidates()[0]
+    # Both modes get the model id: without it a direct "kamu model apa?" in
+    # plain chat gets hallucinated.
+    system_prompt = (
+        f"{settings.system_prompt}\n\nYou are currently running as the model "
+        f"`{model}` — if the user asks which model you are, answer with exactly that."
+    )
     if agent:
         # Agent mode: same assistant, plus the operating brief that tells it
-        # it has a root shell on this VPS (ai/agent.py -> AGENT_SYSTEM_PROMPT).
-        system_prompt = f"{system_prompt}\n\n{AGENT_SYSTEM_PROMPT}"
+        # it has a root shell here — and which model it is, so identity
+        # questions are answered from the prompt instead of by poking around
+        # the machine (ai/agent.py -> agent_system_prompt).
+        system_prompt = f"{system_prompt}\n\n{agent_system_prompt(model)}"
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(_history[chat_id])
     messages.append({"role": "user", "content": prompt})
     return messages
+
+
+# What the bot registers as its slash-command menu (the ☰ Menu button in
+# Telegram shows these), so /reset & friends are discoverable instead of
+# having to remember them.
+COMMANDS: list[tuple[str, str]] = [
+    ("start", "Mulai / lihat cara pakai"),
+    ("reset", "Reset session chat ini (hapus riwayat)"),
+    ("model", "Lihat model AI yang dipakai"),
+    ("ai", "Tanya AI (pilih provider & model)"),
+    ("sh", "Jalankan perintah shell di VPS (admin)"),
+    ("help", "Bantuan"),
+]
 
 
 def _is_admin(message: Message) -> bool:
@@ -225,7 +249,9 @@ async def _run_generation(
     agent: bool = False,
 ) -> None:
     chat_id = trigger_message.chat.id
-    messages = _build_messages(chat_id, prompt, agent=agent)
+    messages = _build_messages(
+        chat_id, prompt, agent=agent, model=candidates[0] if candidates else None
+    )
 
     replier = StreamingReplier(client, trigger_message, placeholder=placeholder, show_reasoning=True)
     started = False
@@ -463,6 +489,16 @@ def register_handlers(app: Client) -> None:
             pass
         raise StopPropagation
 
+    @app.on_start()
+    async def register_command_menu(client: Client):
+        try:
+            await client.set_bot_commands(
+                [BotCommand(name, description) for name, description in COMMANDS]
+            )
+            logger.info("Registered %s bot commands", len(COMMANDS))
+        except Exception:  # noqa: BLE001 - menu is a nicety, never fatal
+            logger.exception("Failed to register bot commands")
+
     @app.on_message(filters.command("start"))
     async def start_cmd(client: Client, message: Message):
         upsert_user(message)
@@ -484,11 +520,13 @@ def register_handlers(app: Client) -> None:
             "directly from Telegram.</blockquote>\n\n"
             "⚡ <b>QUICK START</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• Send a normal message → the agent can check/run things here\n"
+            "• Send a normal message → the agent checks/runs things here\n"
             "• <code>/ai your prompt</code> → chat only, pick provider &amp; model\n"
             "• <code>/sh command</code> → run one shell command directly\n"
-            "• <code>/model</code> → browse all available models\n"
-            "• <code>/reset</code> → clear the current conversation\n\n"
+            "• <code>/model</code> → which model this bot uses\n"
+            "• <code>/reset</code> → reset this chat's session (history)\n"
+            "• <code>/help</code> → this message\n\n"
+            "☰ <i>All of these are also in the Telegram menu button.</i>\n\n"
             "💡 <b>PRO TIP</b>\n"
             "<i>Give the AI clear context, your goal, and the format "
             "you want for a better result.</i>\n\n"
@@ -501,7 +539,7 @@ def register_handlers(app: Client) -> None:
                 [
                     [
                         _button("🤖 Browse models", "menu:model", style="primary", icon_custom_emoji_id=_icon("browse")),
-                        _button("🧹 Reset chat", "menu:reset", style="danger", icon_custom_emoji_id=_icon("reset")),
+                        _button("🧹 Reset session", "menu:reset", style="danger", icon_custom_emoji_id=_icon("reset")),
                     ]
                 ]
             ),
@@ -515,9 +553,17 @@ def register_handlers(app: Client) -> None:
     @app.on_message(filters.command("reset"))
     async def reset_cmd(client: Client, message: Message):
         _history.pop(message.chat.id, None)
+        pending_cleared = [
+            token for token, item in _pending.items()
+            if item.get("chat_id") == message.chat.id
+        ]
+        for token in pending_cleared:
+            _pending.pop(token, None)
         await message.reply_text(
-            "🧹 <b>Conversation cleared</b>\n"
-            "<blockquote>History for this chat has been reset. Start fresh whenever you're ready.</blockquote>",
+            "🧹 <b>Session reset</b>\n"
+            "<blockquote>History for this chat is cleared (one session per "
+            "chat, shared by every topic) and any open provider/model picker "
+            "was cancelled. Send your next message and it starts fresh.</blockquote>",
             parse_mode=HTML,
         )
 

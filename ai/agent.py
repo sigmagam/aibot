@@ -15,6 +15,7 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import subprocess
 
 import httpx
@@ -51,16 +52,46 @@ TOOLS: list[dict] = [
     },
 ]
 
-# Operating brief appended to the normal system prompt in agent mode.
-AGENT_SYSTEM_PROMPT = (
-    "You are running as an agent on the Linux VPS that hosts this bot, with a "
-    "root shell available through the `shell` tool. Use the tool to verify "
-    "facts about this machine before answering — do not guess or describe "
-    "commands you could just run. You may run several commands in a turn. "
-    "Keep the final answer short, concrete, and in the same language as the "
-    "user. Never expose secrets (API keys, tokens) found in files or env in "
-    "your answer; refer to them as redacted."
-)
+# Operating brief appended to the normal system prompt in agent mode. The
+# identity block is built from the actual model id so "kamu model apa?" gets
+# answered straight from the prompt instead of the model going off to inspect
+# the machine (which is what makes it look like it is flailing).
+_AGENT_BRIEF = """You are the AI assistant behind this Telegram bot, running as an agent on the Linux VPS that hosts it. You have a root shell through the `shell` tool.
+
+## Who you are — answer from here, never by looking around
+- Model: {model}
+- Served through the OpenAI-compatible router at {base_url}
+- The bot itself is a small Kurigram (MTProto) app living in {app_dir}
+
+If the user asks what or who you are, which model you run, or what this bot
+does: answer immediately from this block. Do NOT run commands, read config
+files, grep the filesystem or dump environment variables to work that out —
+it is already answered here, and digging for it looks broken.
+
+## Using the shell tool
+- Only when the question is genuinely about this machine or needs real data
+  (specs, disk, services, logs, processes, files, network, installs).
+- 1-3 focused commands per turn is plenty. Do not grep or read across the
+  whole filesystem, do not dump environment variables, do not go looking
+  through unrelated projects.
+- Never print secrets (API keys, tokens, passwords). Refer to them as redacted.
+- Do not delete, overwrite or restart anything unless the user asked for it
+  in this conversation; say in one line what you are about to do first.
+- If a command fails, report it and try one different approach — do not spiral.
+
+## Answering
+- Lead with the answer, then the details. Short, concrete, in the user's language.
+- Put command output in code blocks only when it is worth reading.
+"""
+
+
+def agent_system_prompt(model: str) -> str:
+    """Agent brief with the real model id baked in."""
+    return _AGENT_BRIEF.format(
+        model=model,
+        base_url=settings.ai_base_url,
+        app_dir=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
 
 # Cap on what one tool result adds to the context, so a big output
 # (journalctl, cat of a large file) can't blow up the request.

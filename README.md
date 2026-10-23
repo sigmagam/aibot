@@ -17,6 +17,24 @@ The gate is a `group=-1` handler (`bot/handlers.py -> admin_gate`) that
 raises `StopPropagation`, so it also covers commands added later — nothing
 can slip past it. Set `ADMIN_ONLY=false` to open the bot up again.
 
+## Commands
+
+These are also registered as the Telegram ☰ **Menu** (via
+`set_bot_commands` on startup), so nobody has to remember them:
+
+| Command | What it does |
+| --- | --- |
+| anything you type | the agent answers — and can run commands on this VPS if needed |
+| `/reset` | reset this chat's session (clears history, cancels an open picker) |
+| `/model` | which model this bot uses + the model directory |
+| `/ai <prompt>` | chat only: pick provider & model yourself, no tool use |
+| `/sh <command>` | run one exact shell command (admin) |
+| `/help`, `/start` | usage |
+| `/stats`, `/broadcast`, `/gitpull` | admin extras |
+
+With `ADMIN_ONLY=true` (default) the bot only reacts to `ADMIN_IDS` — for
+everyone else the menu is dead too.
+
 ## Project structure
 
 ```
@@ -126,6 +144,13 @@ bot  -> 🖥️ lscpu | grep ...            — exit 0   (output shown, tappable
         🖥️ free -h; df -h              — exit 0
         <answer built from the real output>
 ```
+
+Identity questions ("kamu model apa?") are answered straight from the
+system prompt — the model id, the router URL and the app directory are
+injected into the agent brief (`ai/agent.py -> agent_system_prompt`), and
+the brief explicitly forbids probing the filesystem/env to figure that out.
+The same brief keeps tool use on topic: 1-3 focused commands, no grepping
+the whole filesystem, no env dumps, no secrets printed.
 
 Implementation:
 
