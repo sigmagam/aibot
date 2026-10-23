@@ -153,17 +153,42 @@ Settings (`.env`):
 `/sh <command>` is still there for when you want to run one exact command
 yourself — same shell, same timeout, no model in the middle.
 
+## Reply layout (one message, always)
+
+Every reply is **one** Telegram message, edited in place as it streams
+(`edit_text`, throttled by `DRAFT_UPDATE_INTERVAL`) — nothing is split
+into a second bubble and no continuation is parked somewhere else:
+
+```
+🧠 [reasoning]        -> collapsed expandable blockquote (last ~600 chars)
+🔧 command · exit 0   -> one collapsed block per command (agent mode, max 3)
+<the answer>          -> markdown -> HTML, tables/headings tidied
+```
+
+Reasoning and tool output are the noisy part, so they stay short,
+collapsed, and are never allowed to push the answer out of the message —
+if the budget still gets tight the oldest details are dropped first.
+Before this, a long reasoning + tool tail ate the 4096-char budget, the
+answer got cut mid-sentence and the rest was dumped to paste.rs, which
+looked like the reply "continued in another session". Only a genuinely
+huge answer (>3900 chars) is still cut with a paste.rs link.
+
+Markdown that Telegram can't render is tidied instead of shown raw:
+`# heading` becomes bold, `| tables |` become a monospace block (columns
+line up, inline tags stripped since `<pre>` can't hold them), `---` rules
+are dropped, and streamed reasoning that arrives as glued fragments
+("check it.The next step") gets its spacing normalised.
+
+Conversation history is a **single session per `chat_id`** (up to
+`MAX_HISTORY` messages), shared by every topic/thread in that chat, and
+kept in memory — it does not survive a restart, use `/reset` to clear it.
+
 ## Reasoning / "thinking" display
 
-Whenever a model streams reasoning tokens (regardless of flow), they're
-rendered inside a native Telegram expandable blockquote
-(`<blockquote expandable>` in HTML parse mode) above the final answer, so
-people can tap to expand/collapse the model's reasoning instead of it
-cluttering the chat.
-
-The reply message itself is streamed in by periodically editing it
-(`edit_text`), throttled by `DRAFT_UPDATE_INTERVAL` seconds — no partial
-text is lost even if an edit is skipped.
+Reasoning tokens are rendered inside a native Telegram expandable
+blockquote (`<blockquote expandable>` in HTML parse mode) above the final
+answer, so people can tap to expand/collapse it instead of it cluttering
+the chat.
 
 > [Bot API 10.1](https://core.telegram.org/bots/api-changelog#june-11-2026)
 > added native **Rich Messages** (`sendRichMessage`, `sendRichMessageDraft`,
