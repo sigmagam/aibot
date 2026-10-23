@@ -18,6 +18,7 @@ aibot/
 │   └── mentions.py           # builds the prompt text out of an incoming message
 ├── ai/
 │   ├── models.py             # model catalog, providers, and candidate-order builders
+│   ├── agent.py              # agent mode: the one `shell` tool + tool loop
 │   └── router.py             # streaming client for /v1/chat/completions + fallback
 └── telegram_rich/
     ├── formatting.py          # Markdown -> Telegram HTML
