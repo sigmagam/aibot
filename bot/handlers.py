@@ -1,13 +1,17 @@
 """
-All Kurigram handlers: /start, /help, /reset, /model, /ai, /sh, plain text
-messages, and the small /start inline-button shortcuts.
+All Kurigram handlers: /start, /help, /reset, /model, /ai, plain text
+messages, and the inline-button flows for both.
 
-Single-model bot: every prompt goes to the one model in AI_MODEL
-(ai/models.py -> MODEL). There is no provider/model picker — plain messages
-and `/ai <prompt>` both just run that model.
-
-`/sh <command>` (admin only) is the multi-function part: it runs a shell
-command on the VPS this bot is hosted on and posts the output back.
+Two separate flows:
+  - Plain message (typed directly, mention, or reply-to-bot): no button,
+    runs immediately with ai/models.py -> default_candidates() (tries
+    claude-opus-4-6-thinking, then grok-4.5-high, then random fallback).
+  - /ai <prompt>: shows a provider picker button first (Antigravity,
+    Gemini CLI, Groq, ...). After picking a provider, shows a model
+    picker for that provider. After picking a model, runs with
+    ai/models.py -> provider_candidates() (chosen model first, then the
+    rest of that provider, then a random fallback across every other
+    provider if the whole chosen provider fails).
 
 UI conventions used throughout this file:
   - All bot-authored messages use parse_mode=ParseMode.HTML so <b>,
@@ -24,6 +28,8 @@ from __future__ import annotations
 import inspect
 import logging
 import re
+import time
+import uuid
 from collections import defaultdict, deque
 import asyncio
 import os
@@ -44,10 +50,14 @@ try:
 except ImportError:  # older fork without the enum
     ButtonStyle = None
 
-from ai.models import MODEL
-from ai.router import ModelRequestError, router
-from bot.mentions import extract_prompt, should_respond
-from bot.updater import sync as sync_repo
+from ai.models import (
+    MODEL_CATALOG,
+    MODEL_PRIORITY,
+    PROVIDER_LABELS,
+    default_candidates,
+    provider_candidates,
+)
+from ai.router import AllModelsFailedError, router
 from config import settings
 from database import (
     count_users,
@@ -56,6 +66,7 @@ from database import (
     remove_user,
     upsert_user,
 )
+from bot.mentions import extract_prompt, should_respond
 from telegram_rich.stream import StreamingReplier
 
 logger = logging.getLogger("bot.handlers")
@@ -122,6 +133,10 @@ def _button(
 # directly — so this is opt-in via ENABLE_BUTTON_ICONS, off by default so it
 # never silently fails on bots that aren't eligible.
 _BUTTON_ICONS = {
+    "provider": "5237799019329105246",   # 🧠
+    "model": "5472164874886846699",      # ✨
+    "cancel": "5337249876126215335",     # ❌
+    "back": "5258236805890710909",       # ⬅️
     "browse": "5372981976804366741",     # 🤖
     "reset": "4956591954088428445",      # 🧹
 }
@@ -137,18 +152,6 @@ def _esc(text: str) -> str:
     return (
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
-
-
-# Conversation history per chat_id, kept in memory (lost on process restart).
-# Format: deque[{"role": "user"/"assistant", "content": str}]
-_history: dict[int, deque] = defaultdict(lambda: deque(maxlen=settings.max_history))
-
-
-def _build_messages(chat_id: int, prompt: str) -> list[dict]:
-    messages = [{"role": "system", "content": settings.system_prompt}]
-    messages.extend(_history[chat_id])
-    messages.append({"role": "user", "content": prompt})
-    return messages
 
 
 def _run_shell(command: str) -> tuple[int | None, str]:
@@ -194,11 +197,36 @@ def _shell_report(command: str, code: int | None, output: str) -> str:
     )
 
 
+# Conversation history per chat_id, kept in memory (lost on process restart).
+# Format: deque[{"role": "user"/"assistant", "content": str}]
+_history: dict[int, deque] = defaultdict(lambda: deque(maxlen=settings.max_history))
+
+# Prompts waiting on an /ai provider/model button tap, keyed by a short
+# random token referenced from the button's callback_data. Cleared once
+# used, or pruned once they get too old (see _prune_pending).
+_pending: dict[str, dict] = {}
+
+
+def _prune_pending() -> None:
+    cutoff = time.monotonic() - settings.pending_ttl
+    stale = [token for token, item in _pending.items() if item["created_at"] < cutoff]
+    for token in stale:
+        _pending.pop(token, None)
+
+
+def _build_messages(chat_id: int, prompt: str) -> list[dict]:
+    messages = [{"role": "system", "content": settings.system_prompt}]
+    messages.extend(_history[chat_id])
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
 async def _run_generation(
     client: Client,
     trigger_message: Message,
     prompt: str,
     *,
+    candidates: list[str],
     placeholder: Message | None = None,
 ) -> None:
     chat_id = trigger_message.chat.id
@@ -206,10 +234,12 @@ async def _run_generation(
 
     replier = StreamingReplier(client, trigger_message, placeholder=placeholder, show_reasoning=True)
     started = False
+    model_used = None
     try:
-        async for chunk in router.stream_chat(messages):
+        async for model, chunk in router.stream_chat(messages, candidates=candidates):
             if not started:
                 started = True
+                model_used = model
                 await replier.start()
             if chunk.kind == "reasoning":
                 await replier.push_reasoning(chunk.delta)
@@ -225,35 +255,29 @@ async def _run_generation(
             )
             return
 
-        await replier.finish(MODEL)
+        await replier.finish(model_used)
 
         _history[chat_id].append({"role": "user", "content": prompt})
         _history[chat_id].append({"role": "assistant", "content": replier.content})
 
-    except ModelRequestError as exc:
-        logger.error("Model request failed: %s", exc)
-        if replier.content or getattr(replier, "_reasoning", ""):
-            # Part of an answer already streamed out before the error hit
-            # (e.g. a mid-stream drop or the total-duration timeout) —
-            # finish it off normally (pasting to paste.rs if it's long)
-            # instead of throwing the partial answer away.
-            try:
-                await replier.finish(MODEL)
-                _history[chat_id].append({"role": "user", "content": prompt})
-                _history[chat_id].append({"role": "assistant", "content": replier.content})
-                return
-            except Exception:
-                logger.exception("Failed to finish partial answer after error")
-        await replier.fail(
-            "⚠️ <b>Model failed</b>\n"
-            f"<blockquote><code>{_esc(MODEL)}</code> is currently failing "
-            f"or unreachable.\n<code>{_esc(str(exc))}</code></blockquote>"
+    except AllModelsFailedError as exc:
+        logger.error("All candidate models failed: %s", exc)
+        err_text = (
+            "⚠️ <b>All models failed</b>\n"
+            "<blockquote>Every candidate model is currently failing or unreachable.\n"
+            f"Tried: <code>{_esc(', '.join(exc.attempts))}</code></blockquote>"
         )
+        await replier.fail(err_text)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error while processing message")
         if replier.content or getattr(replier, "_reasoning", ""):
+            # We already streamed part (or all) of an answer before this
+            # error hit (e.g. a mid-stream drop or the total-duration
+            # timeout) — finish it off normally (which pastes to paste.rs
+            # if it's long) instead of throwing the partial answer away
+            # behind a generic error message.
             try:
-                await replier.finish(MODEL)
+                await replier.finish(model_used or "unknown")
                 _history[chat_id].append({"role": "user", "content": prompt})
                 _history[chat_id].append({"role": "assistant", "content": replier.content})
                 return
@@ -264,12 +288,121 @@ async def _run_generation(
         )
 
 
-def _model_info_text() -> str:
-    return (
-        "🧩 <b>MODEL</b>\n"
-        f"✨ <code>{_esc(MODEL)}</code>\n\n"
-        "<blockquote>One model, no picker. Send a normal message or use "
-        "<code>/ai your prompt</code> — both go straight to it.</blockquote>"
+def _provider_keyboard(token: str) -> InlineKeyboardMarkup:
+    providers = list(MODEL_CATALOG.keys())
+    rows = []
+    for i in range(0, len(providers), 2):
+        row = []
+        for provider in providers[i : i + 2]:
+            label = PROVIDER_LABELS.get(provider, provider)
+            row.append(_button(f"🧠 {label}", f"prov:{provider}:{token}", style="primary", icon_custom_emoji_id=_icon("provider")))
+        rows.append(row)
+    rows.append([_button("❌ Cancel", f"cancel:{token}", style="danger", icon_custom_emoji_id=_icon("cancel"))])
+    return InlineKeyboardMarkup(rows)
+
+
+def _model_keyboard(provider: str, token: str) -> InlineKeyboardMarkup:
+    models = MODEL_CATALOG.get(provider, [])
+    rows = []
+    for i in range(0, len(models), 2):
+        row = []
+        for idx in range(i, min(i + 2, len(models))):
+            model = models[idx]
+            # short_name = last path segment, e.g. "cf/@cf/meta/llama-3.2-1b-instruct" -> "llama-3.2-1b-instruct"
+            short_name = model.rsplit("/", 1)[-1]
+            # callback_data references the model by its index within this
+            # provider's list (not the raw model string) — some model ids
+            # (e.g. long OpenRouter ":free" ids) push "model:<full-id>:<token>"
+            # past Telegram's 64-byte callback_data limit, which silently
+            # breaks the button. "provider/index" stays short no matter how
+            # long the model name is.
+            row.append(_button(f"✨ {short_name}", f"model:{provider}/{idx}:{token}", style="success", icon_custom_emoji_id=_icon("model")))
+        rows.append(row)
+    rows.append([_button("⬅️ Back to providers", f"back:{token}", style="danger", icon_custom_emoji_id=_icon("back"))])
+    return InlineKeyboardMarkup(rows)
+
+
+# /model is paginated one provider per page (plus an overview page 0) so a
+# single message never risks Telegram's ~4096-character limit, no matter how
+# many providers/models get added to the catalog later.
+_MODEL_PAGE_KEYS: list[str] = list(MODEL_CATALOG.keys())  # index N-1 -> provider key for page N
+
+
+def _model_directory_page(page: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Build the (text, keyboard) for /model page `page`.
+    Page 0 = overview (auto-mode priority + provider index).
+    Page 1..len(providers) = that provider's full model list.
+    """
+    total_providers = len(_MODEL_PAGE_KEYS)
+    last_page = total_providers  # page 0 is the overview, so last real page == count of providers
+    page = max(0, min(page, last_page))
+
+    if page == 0:
+        total = sum(len(models) for models in MODEL_CATALOG.values())
+        lines = [
+            "🧩 <b>MODEL DIRECTORY</b>",
+            "",
+            f"📦 <b>{total}</b> models available across "
+            f"<b>{total_providers}</b> providers.",
+            "",
+            "🤖 <b>Auto mode priority</b>",
+        ]
+        for i, m in enumerate(MODEL_PRIORITY, start=1):
+            lines.append(f"  {i}. <code>{_esc(m)}</code>")
+        lines += ["", "📚 <b>Providers</b> <i>(tap Next to browse each one)</i>"]
+        for i, provider in enumerate(_MODEL_PAGE_KEYS, start=1):
+            label = PROVIDER_LABELS.get(provider, provider)
+            count = len(MODEL_CATALOG[provider])
+            lines.append(f"  {i}. <b>{_esc(label)}</b> — {count} models")
+        lines += [
+            "",
+            "<blockquote>🎛️ Use <code>/ai your prompt</code> to pick "
+            "a provider and model manually.</blockquote>",
+        ]
+    else:
+        provider = _MODEL_PAGE_KEYS[page - 1]
+        models = MODEL_CATALOG[provider]
+        label = PROVIDER_LABELS.get(provider, provider)
+        lines = [
+            f"🧩 <b>MODEL DIRECTORY</b> — page {page}/{last_page}",
+            "",
+            f"▸ <b>{_esc(label)}</b> ({len(models)} models)",
+        ]
+        for m in models:
+            lines.append(f"  • <code>{_esc(m)}</code>")
+        lines += [
+            "",
+            "<blockquote>🎛️ Use <code>/ai your prompt</code> to pick "
+            "a provider and model manually.</blockquote>",
+        ]
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(_button("⬅️ Prev", f"modelpage:{page - 1}", style="danger", icon_custom_emoji_id=_icon("back")))
+    if page < last_page:
+        nav_row.append(_button("Next ➡️", f"modelpage:{page + 1}", style="primary"))
+    rows = [nav_row] if nav_row else []
+    rows.append([_button("🧭 Pick provider &amp; model", "menu:ai", style="primary", icon_custom_emoji_id=_icon("provider"))])
+
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+async def _offer_provider_selection(message: Message, prompt: str) -> None:
+    """/ai flow: ask which provider to use before calling the AI."""
+    _prune_pending()
+    token = uuid.uuid4().hex[:8]
+    _pending[token] = {
+        "chat_id": message.chat.id,
+        "prompt": prompt,
+        "trigger_message": message,
+        "created_at": time.monotonic(),
+    }
+    await message.reply_text(
+        "🧭 <b>Choose a provider</b>\n"
+        "<blockquote>Pick which AI provider should answer your prompt.</blockquote>",
+        quote=True,
+        parse_mode=HTML,
+        reply_markup=_provider_keyboard(token),
     )
 
 
@@ -292,28 +425,26 @@ def register_handlers(app: Client) -> None:
             "╭────────────────────────╮\n"
             "        ✦ <b>AI STUDIO</b> ✦\n"
             "╰────────────────────────╯\n\n"
-            "<blockquote>Welcome to your personal AI workspace. Chat, "
-            "code, brainstorm — and run things on the VPS — straight "
-            "from Telegram.</blockquote>\n\n"
+            "<blockquote>Welcome to your personal AI workspace. "
+            "Chat, code, brainstorm, and explore multiple AI models "
+            "directly from Telegram.</blockquote>\n\n"
             "⚡ <b>QUICK START</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• Send a normal message → the model replies\n"
-            "• <code>/ai your prompt</code> → same model, explicit\n"
-            "• <code>/sh command</code> → run a shell command on the VPS\n"
-            "• <code>/model</code> → show the model in use\n"
+            "• Send a normal message → automatic model selection\n"
+            "• <code>/ai your prompt</code> → choose provider &amp; model\n"
+            "• <code>/model</code> → browse all available models\n"
             "• <code>/reset</code> → clear the current conversation\n\n"
             "💡 <b>PRO TIP</b>\n"
             "<i>Give the AI clear context, your goal, and the format "
             "you want for a better result.</i>\n\n"
             "🧩 <b>Example</b>\n"
-            "<pre>/ai Explain quantum computing simply\n"
-            "/sh df -h</pre>\n\n"
+            "<pre>/ai Explain quantum computing simply</pre>\n\n"
             "🚀 <b>Ready when you are.</b>",
             parse_mode=HTML,
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
-                        _button("🤖 Model info", "menu:model", style="primary", icon_custom_emoji_id=_icon("browse")),
+                        _button("🤖 Browse models", "menu:model", style="primary", icon_custom_emoji_id=_icon("browse")),
                         _button("🧹 Reset chat", "menu:reset", style="danger", icon_custom_emoji_id=_icon("reset")),
                     ]
                 ]
@@ -336,7 +467,8 @@ def register_handlers(app: Client) -> None:
 
     @app.on_message(filters.command("model"))
     async def model_cmd(client: Client, message: Message):
-        await message.reply_text(_model_info_text(), parse_mode=HTML)
+        text, markup = _model_directory_page(0)
+        await message.reply_text(text, parse_mode=HTML, reply_markup=markup)
 
     def _is_admin(message: Message) -> bool:
         return bool(message.from_user and message.from_user.id in settings.admin_ids)
@@ -369,7 +501,7 @@ def register_handlers(app: Client) -> None:
         sent = failed = 0
         status = await message.reply_text(
             f"📣 <b>Preparing broadcast</b>\n"
-            f"<blockquote>Sending to <b>{len(targets)}</b> users...</blockquote>",
+            f"<blockquote>Sending to <b>{len(targets)}</b> users…</blockquote>",
             parse_mode=HTML,
         )
 
@@ -398,48 +530,68 @@ def register_handlers(app: Client) -> None:
 
     @app.on_message(filters.command("gitpull"))
     async def gitpull_cmd(client: Client, message: Message):
-        """Pull the latest code from GitHub and restart. Pull only — this
-        never commits or pushes anything."""
         if not _is_admin(message):
             return
 
         status = await message.reply_text(
             "🔄 <b>UPDATE DEPLOYMENT</b>\n"
-            "<blockquote>Pulling the latest changes from GitHub...</blockquote>",
+            "<blockquote>Pulling the latest changes from GitHub…</blockquote>",
             parse_mode=HTML,
         )
         try:
-            # Off the event loop: pip install can take minutes.
-            ok, output = await asyncio.to_thread(
-                sync_repo, settings.git_repo_dir, settings.git_branch
+            repo = os.path.abspath(settings.git_repo_dir)
+            pull = subprocess.run(
+                ["git", "-C", repo, "pull", "--ff-only", "origin", settings.git_branch],
+                capture_output=True, text=True, timeout=120,
             )
-        except Exception as exc:  # noqa: BLE001
+            if pull.returncode != 0:
+                output = (pull.stderr or pull.stdout or "git pull failed").strip()
+                await status.edit_text(
+                    "❌ <b>UPDATE FAILED</b>\n\n"
+                    f"<pre>{_esc(output[-3500:])}</pre>",
+                    parse_mode=HTML,
+                )
+                return
+
+            req = os.path.join(repo, "requirements.txt")
+            if os.path.exists(req):
+                pip = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-r", req, "-q"],
+                    capture_output=True, text=True, timeout=180,
+                )
+                if pip.returncode != 0:
+                    output = (pip.stderr or pip.stdout or "pip install failed").strip()
+                    await status.edit_text(
+                        "⚠️ <b>CODE UPDATED, DEPENDENCY INSTALL FAILED</b>\n\n"
+                        f"<pre>{_esc(output[-3500:])}</pre>",
+                        parse_mode=HTML,
+                    )
+                    return
+
+            commit = subprocess.run(
+                ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip() or "unknown"
+
             await status.edit_text(
-                "❌ <b>UPDATE ERROR</b>\n\n" f"<pre>{_esc(str(exc)[-3500:])}</pre>",
+                "✅ <b>UPDATE SUCCESSFUL</b>\n\n"
+                f"📌 Commit: <code>{_esc(commit)}</code>\n"
+                "♻️ Bot is restarting automatically…",
                 parse_mode=HTML,
             )
-            return
+            await asyncio.sleep(1)
 
-        if not ok:
+            # Replace the current process so systemd/supervisor still sees
+            # one bot process and the updated code is loaded immediately.
+            os.chdir(repo)
+            os.execv(sys.executable, [sys.executable, os.path.join(repo, "main.py")])
+
+        except Exception as exc:
             await status.edit_text(
-                "❌ <b>UPDATE FAILED</b>\n\n" f"<pre>{_esc(output[-3500:])}</pre>",
+                "❌ <b>UPDATE ERROR</b>\n\n"
+                f"<pre>{_esc(str(exc)[-3500:])}</pre>",
                 parse_mode=HTML,
             )
-            return
-
-        await status.edit_text(
-            "✅ <b>UPDATE SUCCESSFUL</b>\n\n"
-            f"📌 {_esc(output)}\n"
-            "♻️ Bot is restarting automatically...",
-            parse_mode=HTML,
-        )
-        await asyncio.sleep(1)
-
-        # Replace the current process so systemd/supervisor still sees
-        # one bot process and the updated code is loaded immediately.
-        repo = os.path.abspath(settings.git_repo_dir)
-        os.chdir(repo)
-        os.execv(sys.executable, [sys.executable, os.path.join(repo, "main.py")])
 
     @app.on_message(filters.command("sh"))
     async def sh_cmd(client: Client, message: Message):
@@ -482,12 +634,12 @@ def register_handlers(app: Client) -> None:
         prompt = message.text.split(None, 1)[1].strip() if len(message.command) > 1 else ""
         if not prompt:
             await message.reply_text(
-                "i️ <b>Usage</b>\n<pre>/ai your question</pre>",
+                "ℹ️ <b>Usage</b>\n<pre>/ai your question</pre>",
                 quote=True,
                 parse_mode=HTML,
             )
             return
-        await _run_generation(client, message, prompt)
+        await _offer_provider_selection(message, prompt)
 
     # Telegram Business / connected-account messages are delivered as
     # normal Message objects with `business_connection_id` set.
@@ -516,7 +668,12 @@ def register_handlers(app: Client) -> None:
             message.chat.id,
             connection_id,
         )
-        await _run_generation(client, message, prompt)
+        await _run_generation(
+            client,
+            message,
+            prompt,
+            candidates=default_candidates(),
+        )
 
     @app.on_message(filters.text & ~filters.business & ~filters.command(_COMMANDS))
     async def on_text(client: Client, message: Message):
@@ -539,22 +696,136 @@ def register_handlers(app: Client) -> None:
         if not prompt:
             return
 
-        # Plain message: run the single model immediately, no button.
-        await _run_generation(client, message, prompt)
+        # Plain message: no button, run immediately with the default order.
+        await _run_generation(client, message, prompt, candidates=default_candidates())
 
     @app.on_callback_query(filters.regex(r"^menu:"))
     async def on_menu_shortcut(client: Client, callback_query: CallbackQuery):
-        """Shortcuts attached to /start buttons."""
+        """Shortcuts attached to /start and /model buttons."""
         _, action = callback_query.data.split(":", 1)
         await callback_query.answer()
         if action == "model":
-            await callback_query.message.reply_text(
-                _model_info_text(), parse_mode=HTML
-            )
+            await model_cmd(client, callback_query.message)
         elif action == "reset":
             await reset_cmd(client, callback_query.message)
         elif action == "ai":
             await callback_query.message.reply_text(
-                "i️ <b>Usage</b>\n<pre>/ai your question</pre>",
+                "ℹ️ <b>Usage</b>\n<pre>/ai your question</pre>",
                 parse_mode=HTML,
             )
+
+    @app.on_callback_query(filters.regex(r"^modelpage:"))
+    async def on_model_page(client: Client, callback_query: CallbackQuery):
+        """Prev/Next paging through /model's provider-by-provider directory."""
+        _, page_str = callback_query.data.split(":", 1)
+        try:
+            page = int(page_str)
+        except ValueError:
+            page = 0
+        await callback_query.answer()
+        text, markup = _model_directory_page(page)
+        try:
+            await callback_query.message.edit_text(text, parse_mode=HTML, reply_markup=markup)
+        except Exception:
+            # e.g. "message not modified" if the same page was tapped twice
+            pass
+
+    @app.on_callback_query(filters.regex(r"^prov:"))
+    async def on_provider_chosen(client: Client, callback_query: CallbackQuery):
+        _, provider, token = callback_query.data.split(":", 2)
+        pending = _pending.get(token)
+
+        if pending is None:
+            await callback_query.answer(
+                "This request expired — please send /ai again.", show_alert=True
+            )
+            return
+
+        await callback_query.answer()
+        pending["provider"] = provider
+        try:
+            await callback_query.message.edit_text(
+                f"🧭 <b>Provider:</b> {_esc(PROVIDER_LABELS.get(provider, provider))}\n"
+                "<blockquote>Now pick a model:</blockquote>",
+                parse_mode=HTML,
+                reply_markup=_model_keyboard(provider, token),
+            )
+        except Exception:
+            pass
+
+    @app.on_callback_query(filters.regex(r"^back:"))
+    async def on_back_to_providers(client: Client, callback_query: CallbackQuery):
+        _, token = callback_query.data.split(":", 1)
+        pending = _pending.get(token)
+
+        if pending is None:
+            await callback_query.answer(
+                "This request expired — please send /ai again.", show_alert=True
+            )
+            return
+
+        await callback_query.answer()
+        try:
+            await callback_query.message.edit_text(
+                "🧭 <b>Choose a provider</b>\n"
+                "<blockquote>Pick which AI provider should answer your prompt.</blockquote>",
+                parse_mode=HTML,
+                reply_markup=_provider_keyboard(token),
+            )
+        except Exception:
+            pass
+
+    @app.on_callback_query(filters.regex(r"^cancel:"))
+    async def on_cancel(client: Client, callback_query: CallbackQuery):
+        _, token = callback_query.data.split(":", 1)
+        _pending.pop(token, None)
+        await callback_query.answer("Cancelled.")
+        try:
+            await callback_query.message.edit_text(
+                "✖️ <b>Cancelled</b>\n<blockquote>No model was run for that prompt.</blockquote>",
+                parse_mode=HTML,
+            )
+        except Exception:
+            pass
+
+    @app.on_callback_query(filters.regex(r"^model:"))
+    async def on_model_chosen(client: Client, callback_query: CallbackQuery):
+        _, provider_and_idx, token = callback_query.data.split(":", 2)
+        pending = _pending.pop(token, None)
+
+        if pending is None:
+            await callback_query.answer(
+                "This request expired — please send /ai again.", show_alert=True
+            )
+            return
+
+        # provider_and_idx is "provider/index" (see _model_keyboard) — decode
+        # back to the real model string rather than trusting raw text from
+        # the button, and keep the lookup index-safe against a stale button
+        # (e.g. from before a bot restart with a different catalog).
+        provider, _, idx_str = provider_and_idx.rpartition("/")
+        provider_models = MODEL_CATALOG.get(provider, [])
+        try:
+            model = provider_models[int(idx_str)]
+        except (ValueError, IndexError):
+            await callback_query.answer(
+                "That model is no longer available — please send /ai again.",
+                show_alert=True,
+            )
+            return
+
+        await callback_query.answer()
+        try:
+            await callback_query.message.edit_reply_markup(None)
+        except Exception:
+            pass
+
+        candidates = provider_candidates(provider, model)
+
+        await _run_generation(
+            client,
+            pending["trigger_message"],
+            pending["prompt"],
+            candidates=candidates,
+            placeholder=callback_query.message,
+        )

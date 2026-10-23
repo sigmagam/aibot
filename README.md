@@ -1,115 +1,157 @@
 # Telegram AI Bot (Kurigram + 9.todict.tech)
 
 A Telegram bot built with [Kurigram](https://github.com/KurimuzonAkuma/kurigram)
-that forwards prompts to the AI router at `https://9.todict.tech/v1`
-(OpenAI-compatible `/chat/completions`, SSE streaming) — and that can also
-run commands on the VPS it is hosted on.
-
-It runs **one model**, set with `AI_MODEL` (default
-`tokenharbor/deepseek-v4.1-flash:free`). There is no provider/model picker:
-plain messages and `/ai` both go straight to that model.
+that forwards questions to the AI router at `https://9.todict.tech/v1`
+(OpenAI-compatible `/chat/completions` endpoint, SSE streaming).
 
 ## Project structure
 
 ```
 aibot/
-├── main.py                 # entrypoint (+ startup git auto-pull)
-├── config.py               # reads .env / environment variables
+├── main.py                 # entrypoint
+├── config.py                # reads .env / environment variables
 ├── requirements.txt
 ├── .env.example
 ├── bot/
-│   ├── client.py           # builds the Kurigram Client instance
-│   ├── handlers.py         # /start /help /reset /model /ai /sh + message handlers
-│   ├── mentions.py         # builds the prompt text out of an incoming message
-│   └── updater.py          # git pull --ff-only + pip install (pull only)
+│   ├── client.py             # builds the Kurigram Client instance
+│   ├── handlers.py           # /start /help /reset /model /ai + message + button handlers
+│   └── mentions.py           # builds the prompt text out of an incoming message
 ├── ai/
-│   ├── models.py           # the single model id
-│   └── router.py           # streaming client for /v1/chat/completions
+│   ├── models.py             # model catalog, providers, and candidate-order builders
+│   └── router.py             # streaming client for /v1/chat/completions + fallback
 └── telegram_rich/
-    ├── formatting.py       # Markdown -> Telegram HTML
-    └── stream.py           # streams the reply, throttled message edits
+    ├── formatting.py          # Markdown -> Telegram HTML
+    └── stream.py               # streams the reply, throttled message edits
 ```
 
-## Commands
+## Two ways to get a reply
 
-| Command | What it does |
-| --- | --- |
-| any plain message | asks the model, streams the answer |
-| `/ai <prompt>` | same model, explicit command |
-| `/model` | shows which model is in use |
-| `/reset` | clears this chat's conversation history |
-| `/sh <command>` | **admin only** — runs a shell command on the VPS |
-| `/stats` | **admin only** — user count / database path |
-| `/broadcast <text>` | **admin only** — DMs every registered user |
-| `/gitpull` | **admin only** — `git pull --ff-only` + `pip install`, then restart |
+### 1. Plain message — automatic, no button
 
-In groups the bot answers every text message it receives — add it as a
-group admin, or turn off Privacy Mode in @BotFather (`/setprivacy` →
-Disable), otherwise Telegram won't deliver plain group messages to it.
+Just type anything, in a private chat **or** a group, no mention or
+command needed (a mention / reply-to-bot still gets stripped into a
+clean prompt if present). This runs immediately with a fixed order (see
+`ai/models.py -> default_candidates()`):
 
-## The single model
+1. `tokenharbor/deepseek-v4.1-flash:free` — the one default model
+2. If it fails, a random model from the rest of the catalog (only the
+   four providers below are in it).
 
-`ai/models.py -> MODEL` is `AI_MODEL` from `.env`. Change that one value to
-switch models; nothing else needs touching. If the model call fails
-(HTTP error, timeout, dropped stream) the bot reports it in the chat —
-there is no fallback model any more. If some of the answer already
-streamed before the failure, that partial answer is kept and finished off
-instead of being thrown away.
+> Adding the bot as a group **admin** makes Telegram deliver it every
+> message regardless of Privacy Mode. If it's a regular (non-admin)
+> member instead, disable Privacy Mode in @BotFather (`/setprivacy` →
+> `Disable`) or the bot won't receive plain group messages — see
+> "Notes" below.
 
-## VPS shell (`/sh`)
+### 2. `/ai <question>` — pick the provider and model yourself
 
-Admins can use the bot as a remote terminal:
+Sends a button grid (2 per row) with the four exposed providers
+(TokenHarbor, Antigravity, NVIDIA NIM, Cloudflare). After picking a
+provider, a second button grid lists that provider's models, also 2 per row, plus a "⬅️ Back to
+providers" button. Once you pick a model, the bot runs it with this
+order (see `ai/models.py -> provider_candidates()`):
 
-```
-/sh df -h
-/sh systemctl status nginx
-/sh tail -n 50 /var/log/nginx/error.log
-```
+1. The model you picked.
+2. The rest of that same provider's models (shuffled), if it fails.
+3. If the whole chosen provider fails, a shuffled random fallback across
+   every other provider in the catalog.
 
-Output is posted back as a `<pre>` block (truncated at ~3500 chars, one
-message), with the exit code in the header. Bounded by `SHELL_TIMEOUT`
-seconds (default 60) and run from `SHELL_WORKDIR` (default `/root`).
-`ENABLE_SHELL=false` disables the command entirely.
+Button taps expire after `PENDING_TTL` seconds (default 10 minutes, see
+`.env.example`) — after that, just send `/ai` again.
 
-> This is full shell access as root on the host: keep `ADMIN_IDS` private.
+## Model catalog
+
+`ai/models.py -> MODEL_CATALOG` is deliberately limited to four
+providers — everything else on the 9.todict.tech dashboard is left out:
+
+| Provider | Key | Models |
+| --- | --- | --- |
+| TokenHarbor | `tokenharbor` | 1 (the default) |
+| Antigravity | `ag` | 16 |
+| NVIDIA NIM | `nvidia` | 10 |
+| Cloudflare | `cf` | 13 |
+
+`MODEL_PRIORITY` holds the single default model
+(`tokenharbor/deepseek-v4.1-flash:free`); the catalog is both the `/ai`
+picker's source and the random-fallback pool for plain messages.
+`THINKING_MODELS` marks which models are known to stream reasoning tokens.
+
+> Add/remove providers in `ai/models.py -> MODEL_CATALOG` — the picker is
+> built from it, nothing else needs touching.
+
+## Button colors (Bot API 9.4 `style`)
+
+Provider/model buttons request the `"primary"` (blue) style, added in
+[Bot API 9.4](https://core.telegram.org/bots/api-changelog#february-9-2026).
+This is feature-detected at import time (`bot/handlers.py ->
+_SUPPORTS_BUTTON_STYLE`) against whatever Kurigram version is installed
+— if the installed version doesn't support the `style` parameter yet,
+it's silently omitted instead of crashing, and starts applying
+automatically the moment Kurigram catches up.
 
 ## Reasoning / "thinking" display
 
-Whenever the model streams reasoning tokens they're rendered inside a
-native Telegram expandable blockquote (`<blockquote expandable>` in HTML
-parse mode) above the final answer, so people can tap to expand/collapse
-the model's reasoning instead of it cluttering the chat.
+Whenever a model streams reasoning tokens (regardless of flow), they're
+rendered inside a native Telegram expandable blockquote
+(`<blockquote expandable>` in HTML parse mode) above the final answer, so
+people can tap to expand/collapse the model's reasoning instead of it
+cluttering the chat.
 
-The reply itself streams in by periodically editing one message
-(`edit_text`), throttled by `DRAFT_UPDATE_INTERVAL` seconds. Answers past
-~3900 chars are cut off in-chat and the full text is uploaded to
-paste.rs with the link underneath.
+The reply message itself is streamed in by periodically editing it
+(`edit_text`), throttled by `DRAFT_UPDATE_INTERVAL` seconds — no partial
+text is lost even if an edit is skipped.
+
+> [Bot API 10.1](https://core.telegram.org/bots/api-changelog#june-11-2026)
+> added native **Rich Messages** (`sendRichMessage`, `sendRichMessageDraft`,
+> `RichBlockThinking`) specifically for streaming AI replies with a
+> proper native "thinking" block. As of this writing Kurigram doesn't
+> expose it yet, so this bot still uses the expandable-blockquote HTML
+> approach above. Worth revisiting once Kurigram adds support.
 
 ## Conversation history
 
-Kept in memory per `chat_id` (up to `MAX_HISTORY` messages). Lost on
-process restart. Use `/reset` to clear it manually.
-
-## Admin, SQLite & deployment
-
-Users are registered in a local SQLite database when they use `/start`.
-The database file defaults to `data/bot.db` and is intentionally local.
-
-Set `ADMIN_IDS` to the numeric Telegram user ID(s) of trusted admins —
-they get `/sh`, `/stats`, `/broadcast` and `/gitpull`.
-
-## Auto update from GitHub
-
-`GIT_AUTO_PULL=true` (default) runs `git pull --ff-only` +
-`pip install -r requirements.txt` at startup; `/gitpull` does the same on
-demand and then replaces the running process (`os.execv`) so the new code
-loads immediately. Updates are **pull only** — the bot never commits or
-pushes anything.
+Kept in memory per `chat_id` (up to `MAX_HISTORY` messages, see `.env`).
+Lost on process restart. Use `/reset` to clear it manually.
 
 ## Notes
 
 - `TG_API_ID` / `TG_API_HASH` are still required even though this is a
   bot (not a user account), because Kurigram is an MTProto client.
-- All bot messages use `parse_mode=HTML` so `<b>` / `<i>` / `<code>` /
-  `<pre>` / `<blockquote>` render, and known emoji are swapped for their
-  custom-emoji versions (`ENABLE_CUSTOM_EMOJI`).
+- Make sure the bot's **Privacy Mode** is disabled in @BotFather
+  (`/setprivacy` → `Disable`) if it's not a group admin and you still
+  want it to see every group message.
+
+## Admin, SQLite & deployment commands
+
+Users are registered in a local SQLite database when they use `/start`.
+The database file defaults to `data/bot.db` and is intentionally local.
+
+Set `ADMIN_IDS` to the numeric Telegram user ID(s) of trusted administrators.
+Admins get:
+
+- `/sh <command>` — run a shell command on the VPS hosting the bot
+  (output posted back as a `<pre>` block with the exit code; bounded by
+  `SHELL_TIMEOUT`, run from `SHELL_WORKDIR`, disabled with
+  `ENABLE_SHELL=false`). Full shell access as root — keep `ADMIN_IDS`
+  private.
+- `/stats` — database/user count.
+- `/broadcast pesan` — send a text broadcast to every user who has started the bot.
+- Reply to a message + `/broadcast` — copy that message to every registered user.
+- `/gitpull` — `git pull --ff-only`, install `requirements.txt`, then replace the
+  running Python process with the updated `main.py`.
+- `GIT_AUTO_PULL=true` (default) does the same pull + `pip install` at
+  startup. Updates are pull-only: the bot never commits or pushes.
+
+The `/gitpull` command is intentionally admin-only. Keep `ADMIN_IDS` private.
+
+## Button colors
+
+The provider picker uses **primary (blue)** buttons, model choices use
+**success (green)** buttons, and navigation/back uses **danger (red)**.
+The `style` argument is feature-detected so older Kurigram versions continue
+to work without crashing.
+
+## GitHub
+
+Commit `data/bot.db` only if you deliberately want to version the database.
+For a normal deployment it should remain ignored and backed up separately.

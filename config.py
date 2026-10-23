@@ -33,10 +33,6 @@ class Settings:
     # --- AI API (router / proxy) ---
     ai_base_url: str = os.getenv("AI_BASE_URL", "https://9.todict.tech/v1")
     ai_api_key: str = os.getenv("AI_API_KEY", "")
-    # The one model this bot uses. There is no provider/model picker any
-    # more — every prompt goes here. Ids are the dashboard form
-    # "<provider>/<model>", e.g. "tokenharbor/deepseek-v4.1-flash:free".
-    ai_model: str = os.getenv("AI_MODEL", "tokenharbor/deepseek-v4.1-flash:free")
     ai_timeout: float = _get_float("AI_TIMEOUT", 120.0)
     # Hard ceiling on a single model's total streaming duration. httpx's
     # per-request timeout only guards individual connect/read operations,
@@ -59,6 +55,9 @@ class Settings:
     # Minimum seconds between message edits while a response is streaming in.
     stream_update_interval: float = _get_float("DRAFT_UPDATE_INTERVAL", 0.8)
 
+    # --- Pending mode-selection buttons ---
+    pending_ttl: float = _get_float("PENDING_TTL", 600.0)
+
     # --- Message effect (private chats only) ---
     # Kurigram calls this `effect_id` (NOT `message_effect_id`, that's the
     # raw Bot API name). Only applied in private chats — Telegram doesn't
@@ -74,8 +73,8 @@ class Settings:
     )
     git_branch: str = os.getenv("GIT_BRANCH", "main")
     git_repo_dir: str = os.getenv("GIT_REPO_DIR", ".")
-    # Pull the latest code from GitHub on startup (/gitpull does the same
-    # on demand). Pull only — never commits or pushes.
+    # Pull the latest code from GitHub on startup (/gitpull does the same on
+    # demand). Pull only — the bot never commits or pushes.
     git_auto_pull: bool = os.getenv("GIT_AUTO_PULL", "true").lower() == "true"
 
     # --- VPS shell (/sh command, admin only) ---
