@@ -66,10 +66,16 @@ class AIRouter:
         self,
         messages: list[dict],
         candidates: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> AsyncIterator[tuple[str, StreamChunk]]:
         """
         Generator that tries each candidate model until one succeeds.
         Yields (model_name, StreamChunk) for every chunk received.
+
+        Pass `tools` (OpenAI function-calling schemas) to let the model call
+        tools; the accumulated calls come out as one final
+        StreamChunk("tool_calls", <json list>) per stream. Nothing is
+        executed here — ai/agent.py owns that.
 
         If `candidates` is omitted, falls back to the default priority +
         random order. If a model fails BEFORE any token came out at all,
@@ -84,6 +90,9 @@ class AIRouter:
         for model in candidates or default_candidates():
             attempts.append(model)
             got_any_chunk = False
+            # index -> {"id", "type", "function": {"name", "arguments"}} for
+            # the streaming tool-call fragments of this attempt.
+            pending_calls: dict[int, dict] = {}
             deadline = time.monotonic() + settings.ai_stream_max_duration
             try:
                 async with httpx.AsyncClient(timeout=settings.ai_timeout) as client:
@@ -92,6 +101,8 @@ class AIRouter:
                         "messages": messages,
                         "stream": True,
                     }
+                    if tools:
+                        payload["tools"] = tools
                     async with client.stream(
                         "POST",
                         f"{self._base_url}/chat/completions",
@@ -139,6 +150,25 @@ class AIRouter:
                                 continue
                             delta = choices[0].get("delta") or {}
 
+                            for frag in delta.get("tool_calls") or []:
+                                got_any_chunk = True
+                                index = frag.get("index") or 0
+                                call = pending_calls.setdefault(
+                                    index,
+                                    {
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    },
+                                )
+                                if frag.get("id"):
+                                    call["id"] = frag["id"]
+                                function = frag.get("function") or {}
+                                if function.get("name"):
+                                    call["function"]["name"] += function["name"]
+                                if function.get("arguments"):
+                                    call["function"]["arguments"] += function["arguments"]
+
                             reasoning_piece = (
                                 delta.get("reasoning_content")
                                 or delta.get("reasoning")
@@ -152,6 +182,12 @@ class AIRouter:
                             if content_piece:
                                 got_any_chunk = True
                                 yield model, StreamChunk("content", content_piece)
+
+                if pending_calls:
+                    yield model, StreamChunk(
+                        "tool_calls",
+                        json.dumps([pending_calls[i] for i in sorted(pending_calls)]),
+                    )
 
                 # Reached this point without an exception -> this model
                 # succeeded, we're done.

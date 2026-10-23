@@ -82,6 +82,15 @@ class Settings:
     shell_timeout: float = _get_float("SHELL_TIMEOUT", 60.0)
     shell_workdir: str = os.getenv("SHELL_WORKDIR", "/root")
 
+    # --- Agent mode (the model runs shell commands itself) ---
+    # Plain messages in agent mode let the model check the machine ("cek
+    # spesifikasi vps saya") instead of guessing. It has the same root shell
+    # as /sh, so it is admins-only unless AGENT_ADMIN_ONLY=false.
+    enable_agent: bool = os.getenv("ENABLE_AGENT", "true").lower() == "true"
+    agent_admin_only: bool = os.getenv("AGENT_ADMIN_ONLY", "true").lower() == "true"
+    # Max model+tool rounds per message (each round = one API call).
+    agent_max_steps: int = _get_int("AGENT_MAX_STEPS", 6)
+
 
 settings = Settings()
 

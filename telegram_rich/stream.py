@@ -10,9 +10,15 @@ can tap to see the model's reasoning without it cluttering the chat.
 When `show_reasoning=False` ("Direct" mode), reasoning tokens are simply
 discarded and only a "typing..." chat action is refreshed while we wait
 for the first content token.
+
+Agent mode (see ai/agent.py) also calls `push_tool()` after every shell
+command the model ran, so the same message shows what the agent actually
+did — command, exit code and output — above the answer, same idea as
+Hermes' tool-progress bubbles.
 """
 from __future__ import annotations
 
+import html
 import time
 
 import httpx
@@ -62,6 +68,7 @@ class StreamingReplier:
         self._show_reasoning = show_reasoning
         self._reasoning = ""
         self._content = ""
+        self._tool_log: list[str] = []
         self._last_edit = 0.0
         self._over_threshold_notified = False
 
@@ -102,16 +109,40 @@ class StreamingReplier:
         self._content += delta
         await self._maybe_update()
 
+    async def push_tool(self, command: str, code: int | None, output: str) -> None:
+        """Record one shell command the agent ran (agent mode)."""
+        snippet = (output or "(no output)").strip()
+        if len(snippet) > 900:
+            snippet = snippet[:900] + "\n... (truncated)"
+        if code is None:
+            status = "timeout"
+        else:
+            status = f"exit {code}"
+        self._tool_log.append(
+            f"🖥️ <code>{html.escape(command)}</code> — {status}\n"
+            f"<blockquote expandable><pre>{html.escape(snippet)}</pre></blockquote>"
+        )
+        # Keep the log bounded: a long agent run must not push the answer
+        # past Telegram's message limit on its own.
+        while len("\n".join(self._tool_log)) > 2500 and len(self._tool_log) > 1:
+            self._tool_log.pop(0)
+        await self._maybe_update(force=True)
+
     def _render(self) -> str:
         parts: list[str] = []
         if self._show_reasoning and self._reasoning:
             parts.append(f"🧠 {md_to_html(self._reasoning)}")
+        if self._tool_log:
+            # What the agent actually ran on this VPS (agent mode).
+            parts.append("\n".join(self._tool_log))
         if self._content:
             parts.append(md_to_html(self._content))
         return "\n".join(parts) if parts else "…"
 
     async def _maybe_update(self, force: bool = False) -> None:
-        if not self._content and not (self._show_reasoning and self._reasoning):
+        if not self._content and not self._tool_log and not (
+            self._show_reasoning and self._reasoning
+        ):
             return
         now = time.monotonic()
         if not force and (now - self._last_edit) < settings.stream_update_interval:

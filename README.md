@@ -43,7 +43,14 @@ clean prompt if present). This runs immediately with a fixed order (see
 > `Disable`) or the bot won't receive plain group messages — see
 > "Notes" below.
 
+In **agent mode** (see below) the same plain message also lets the model
+run commands here first, so "cek spesifikasi vps saya" gets answered from
+the real machine instead of from its imagination.
+
 ### 2. `/ai <question>` — pick the provider and model yourself
+
+`/ai` is plain chat: it never runs commands, it just replies with the
+model you picked. Use a normal message when you want the agent to act.
 
 Sends a button grid (2 per row) with the four exposed providers
 (TokenHarbor, Antigravity, NVIDIA NIM, Cloudflare). After picking a
@@ -89,6 +96,49 @@ _SUPPORTS_BUTTON_STYLE`) against whatever Kurigram version is installed
 it's silently omitted instead of crashing, and starts applying
 automatically the moment Kurigram catches up.
 
+## Agent mode — the bot actually runs things
+
+Modelled on [hermes-agent](https://github.com/nousresearch/hermes-agent)'s
+idea (agent loop + `terminal` tool + tool-progress in the chat), minus
+everything heavy: **one** tool, **one** loop, no skills/memory/subagent
+machinery, no local model — so it costs nothing extra in RAM on top of the
+process already running here.
+
+What happens on a plain message from an admin:
+
+```
+you  -> cek spesifikasi vps saya
+bot  -> 🖥️ lscpu | grep ...            — exit 0   (output shown, tappable)
+        🖥️ free -h; df -h              — exit 0
+        <answer built from the real output>
+```
+
+Implementation:
+
+| Piece | Where |
+| --- | --- |
+| tool schema (`shell`), operating brief, loop | `ai/agent.py` |
+| `tools=` + streaming `tool_calls` accumulation | `ai/router.py` |
+| tool progress rendered above the answer | `telegram_rich/stream.py` (`push_tool`) |
+| agent vs plain chat switch | `bot/handlers.py` (`_agent_allowed`) |
+
+Settings (`.env`):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ENABLE_AGENT` | `true` | allow tool use at all |
+| `AGENT_ADMIN_ONLY` | `true` | only `ADMIN_IDS` get shell access |
+| `AGENT_MAX_STEPS` | `6` | model+tool rounds per message |
+| `SHELL_TIMEOUT` | `60` | per command timeout |
+| `SHELL_WORKDIR` | `/root` | working directory for commands |
+
+> Agent mode is a root shell with extra steps: keep `ADMIN_IDS` private,
+> and leave `AGENT_ADMIN_ONLY=true` if anyone else can DM the bot.
+> `/ai` and non-admin messages stay read-only chat.
+
+`/sh <command>` is still there for when you want to run one exact command
+yourself — same shell, same timeout, no model in the middle.
+
 ## Reasoning / "thinking" display
 
 Whenever a model streams reasoning tokens (regardless of flow), they're
@@ -129,6 +179,7 @@ The database file defaults to `data/bot.db` and is intentionally local.
 Set `ADMIN_IDS` to the numeric Telegram user ID(s) of trusted administrators.
 Admins get:
 
+- Plain messages also get agent mode (tool use) for admins — see above.
 - `/sh <command>` — run a shell command on the VPS hosting the bot
   (output posted back as a `<pre>` block with the exit code; bounded by
   `SHELL_TIMEOUT`, run from `SHELL_WORKDIR`, disabled with

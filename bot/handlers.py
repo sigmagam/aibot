@@ -57,6 +57,7 @@ from ai.models import (
     default_candidates,
     provider_candidates,
 )
+from ai.agent import AGENT_SYSTEM_PROMPT, run_shell, run_turn
 from ai.router import AllModelsFailedError, router
 from config import settings
 from database import (
@@ -154,32 +155,6 @@ def _esc(text: str) -> str:
     )
 
 
-def _run_shell(command: str) -> tuple[int | None, str]:
-    """Run a shell command on the VPS (blocking — call it via
-    `asyncio.to_thread`, see the /sh handler). Returns (exit_code, output)
-    with stdout+stderr combined; exit_code is None if it hit SHELL_TIMEOUT."""
-    try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=settings.shell_timeout,
-            cwd=settings.shell_workdir or None,
-        )
-    except subprocess.TimeoutExpired as exc:
-        partial = exc.stdout or ""
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", "replace")
-        return None, (
-            partial.strip() + f"\n(timed out after {settings.shell_timeout:.0f}s)"
-        ).strip()
-    except Exception as exc:  # noqa: BLE001
-        return -1, f"failed to run: {exc}"
-    return proc.returncode, (proc.stdout or "").strip()
-
-
 def _shell_report(command: str, code: int | None, output: str) -> str:
     if code is None:
         status = "⏱️ TIMEOUT"
@@ -214,11 +189,30 @@ def _prune_pending() -> None:
         _pending.pop(token, None)
 
 
-def _build_messages(chat_id: int, prompt: str) -> list[dict]:
-    messages = [{"role": "system", "content": settings.system_prompt}]
+def _build_messages(chat_id: int, prompt: str, agent: bool = False) -> list[dict]:
+    system_prompt = settings.system_prompt
+    if agent:
+        # Agent mode: same assistant, plus the operating brief that tells it
+        # it has a root shell on this VPS (ai/agent.py -> AGENT_SYSTEM_PROMPT).
+        system_prompt = f"{system_prompt}\n\n{AGENT_SYSTEM_PROMPT}"
+    messages = [{"role": "system", "content": system_prompt}]
     messages.extend(_history[chat_id])
     messages.append({"role": "user", "content": prompt})
     return messages
+
+
+def _is_admin(message: Message) -> bool:
+    return bool(message.from_user and message.from_user.id in settings.admin_ids)
+
+
+def _agent_allowed(message: Message) -> bool:
+    """Agent mode = the model may run commands here, so it is admins-only
+    unless AGENT_ADMIN_ONLY=false."""
+    if not settings.enable_agent:
+        return False
+    if settings.agent_admin_only:
+        return _is_admin(message)
+    return True
 
 
 async def _run_generation(
@@ -228,23 +222,49 @@ async def _run_generation(
     *,
     candidates: list[str],
     placeholder: Message | None = None,
+    agent: bool = False,
 ) -> None:
     chat_id = trigger_message.chat.id
-    messages = _build_messages(chat_id, prompt)
+    messages = _build_messages(chat_id, prompt, agent=agent)
 
     replier = StreamingReplier(client, trigger_message, placeholder=placeholder, show_reasoning=True)
     started = False
-    model_used = None
+    model_used = candidates[0] if candidates else None
+
+    async def _start_once() -> None:
+        nonlocal started
+        if not started:
+            started = True
+            await replier.start()
+
+    async def on_reasoning(delta: str) -> None:
+        await _start_once()
+        await replier.push_reasoning(delta)
+
+    async def on_content(delta: str) -> None:
+        await _start_once()
+        await replier.push_content(delta)
+
     try:
-        async for model, chunk in router.stream_chat(messages, candidates=candidates):
-            if not started:
-                started = True
-                model_used = model
-                await replier.start()
-            if chunk.kind == "reasoning":
-                await replier.push_reasoning(chunk.delta)
-            else:
-                await replier.push_content(chunk.delta)
+        if agent:
+            # Agent mode: the model may run shell commands on this VPS and
+            # keeps going until it answers (ai/agent.py -> run_turn).
+            await run_turn(
+                messages,
+                on_reasoning=on_reasoning,
+                on_content=on_content,
+                on_tool=replier.push_tool,
+            )
+        else:
+            async for model, chunk in router.stream_chat(messages, candidates=candidates):
+                if not started:
+                    started = True
+                    model_used = model
+                    await replier.start()
+                if chunk.kind == "reasoning":
+                    await replier.push_reasoning(chunk.delta)
+                else:
+                    await replier.push_content(chunk.delta)
 
         if not started:
             await trigger_message.reply_text(
@@ -430,8 +450,9 @@ def register_handlers(app: Client) -> None:
             "directly from Telegram.</blockquote>\n\n"
             "⚡ <b>QUICK START</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• Send a normal message → automatic model selection\n"
-            "• <code>/ai your prompt</code> → choose provider &amp; model\n"
+            "• Send a normal message → the agent can check/run things here\n"
+            "• <code>/ai your prompt</code> → chat only, pick provider &amp; model\n"
+            "• <code>/sh command</code> → run one shell command directly\n"
             "• <code>/model</code> → browse all available models\n"
             "• <code>/reset</code> → clear the current conversation\n\n"
             "💡 <b>PRO TIP</b>\n"
@@ -469,9 +490,6 @@ def register_handlers(app: Client) -> None:
     async def model_cmd(client: Client, message: Message):
         text, markup = _model_directory_page(0)
         await message.reply_text(text, parse_mode=HTML, reply_markup=markup)
-
-    def _is_admin(message: Message) -> bool:
-        return bool(message.from_user and message.from_user.id in settings.admin_ids)
 
     @app.on_message(filters.command("stats"))
     async def stats_cmd(client: Client, message: Message):
@@ -624,7 +642,7 @@ def register_handlers(app: Client) -> None:
             parse_mode=HTML,
         )
         # Off the event loop: the command can run for SHELL_TIMEOUT seconds.
-        code, output = await asyncio.to_thread(_run_shell, command)
+        code, output = await asyncio.to_thread(run_shell, command)
         await status.edit_text(
             _shell_report(command, code, output), parse_mode=HTML
         )
@@ -673,6 +691,7 @@ def register_handlers(app: Client) -> None:
             message,
             prompt,
             candidates=default_candidates(),
+            agent=_agent_allowed(message),
         )
 
     @app.on_message(filters.text & ~filters.business & ~filters.command(_COMMANDS))
@@ -697,7 +716,15 @@ def register_handlers(app: Client) -> None:
             return
 
         # Plain message: no button, run immediately with the default order.
-        await _run_generation(client, message, prompt, candidates=default_candidates())
+        # In agent mode (admins by default) the model can also run commands
+        # on this VPS to answer.
+        await _run_generation(
+            client,
+            message,
+            prompt,
+            candidates=default_candidates(),
+            agent=_agent_allowed(message),
+        )
 
     @app.on_callback_query(filters.regex(r"^menu:"))
     async def on_menu_shortcut(client: Client, callback_query: CallbackQuery):
